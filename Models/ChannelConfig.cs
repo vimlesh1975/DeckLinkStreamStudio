@@ -12,14 +12,16 @@ public sealed class DestinationConfig
     public string StreamKey { get; set; } = "";
     public StreamingProtocol Protocol { get; set; } = StreamingProtocol.RTMP;
 
+    public bool HasValidTarget => !string.IsNullOrWhiteSpace(ServerUrl) && !string.IsNullOrWhiteSpace(StreamKey);
+
     public string FullUrl
     {
         get
         {
-            var server = (ServerUrl ?? "").TrimEnd('/');
-            var key = (StreamKey ?? "").TrimStart('/');
+            var server = (ServerUrl ?? "").Trim().TrimEnd('/');
+            var key = (StreamKey ?? "").Trim().TrimStart('/');
             if (string.IsNullOrWhiteSpace(key))
-                return server;
+                return "";
             return $"{server}/{key}";
         }
     }
@@ -45,7 +47,7 @@ public sealed class StreamConfig
     };
 
     // Video Encoding
-    public VideoEncoderType VideoEncoder { get; set; } = VideoEncoderType.H264_NVENC;
+    public VideoEncoderType VideoEncoder { get; set; } = VideoEncoderType.Auto;
     public int VideoBitrateKbps { get; set; } = 6500;
     public int KeyframeIntervalSeconds { get; set; } = 2;
     public string OutputResolution { get; set; } = "Original"; // Original, 1920x1080, 1280x720, 854x480
@@ -68,6 +70,8 @@ public sealed class StreamStats
     public StreamStatus Status { get; set; } = StreamStatus.Offline;
     public TimeSpan Duration { get; set; } = TimeSpan.Zero;
     public double CurrentBitrateKbps { get; set; }
+    public double SingleStreamBitrateKbps { get; set; }
+    public int ActiveDestinations { get; set; } = 1;
     public double CurrentFps { get; set; }
     public long TotalFrames { get; set; }
     public long DroppedFrames { get; set; }

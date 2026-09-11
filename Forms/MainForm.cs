@@ -28,11 +28,11 @@ public sealed class MainForm : Form
     private readonly ComboBox _formatComboBox = new();
     private readonly Label _statusBadge = new();
     private readonly Label _cpuBadge = new();
-    private readonly Button _btnStartStream = new();
     private readonly Button _btnPreview = new();
     private readonly Button _btnListen = new();
     private readonly CheckBox _chkShowLogs = new();
     private readonly CheckBox _chkDarkMode = new();
+    private readonly DestinationStreamRunner[] _destRunners;
 
     // Main Container Panel
     private readonly Panel _leftPanel = new();
@@ -51,7 +51,6 @@ public sealed class MainForm : Form
     private readonly Label _lblBitrate = new();
     private readonly Label _lblFps = new();
     private readonly Label _lblDropped = new();
-    private readonly Label _lblCpu = new();
     private readonly Label _lblSpeed = new();
 
     private readonly Panel _hwSettingsPanel = new();
@@ -67,7 +66,7 @@ public sealed class MainForm : Form
 
     // Destination 1: Sahyadri Facebook
     private readonly Panel _pnlFb = new();
-    private readonly CheckBox _chkFb = new();
+    private readonly Label _lblFbTitle = new();
     private readonly Label _lblFbUrl = new();
     private readonly TextBox _txtFbUrl = new();
     private readonly Button _btnStreamFb = new();
@@ -77,7 +76,7 @@ public sealed class MainForm : Form
 
     // Destination 2: Sahyadri YouTube
     private readonly Panel _pnlYt = new();
-    private readonly CheckBox _chkYt = new();
+    private readonly Label _lblYtTitle = new();
     private readonly Label _lblYtUrl = new();
     private readonly TextBox _txtYtUrl = new();
     private readonly Button _btnStreamYt = new();
@@ -87,7 +86,7 @@ public sealed class MainForm : Form
 
     // Destination 3: Sahyadri YouTube News
     private readonly Panel _pnlYtNews = new();
-    private readonly CheckBox _chkYtNews = new();
+    private readonly Label _lblYtNewsTitle = new();
     private readonly Label _lblYtNewsUrl = new();
     private readonly TextBox _txtYtNewsUrl = new();
     private readonly Button _btnStreamYtNews = new();
@@ -127,6 +126,38 @@ public sealed class MainForm : Form
         _devices = DeckLinkEnumerator.GetInstalledDevices();
         _runner = new FfmpegStreamRunner();
 
+        _destRunners = new DestinationStreamRunner[3]
+        {
+            new DestinationStreamRunner(0, "Sahyadri Facebook"),
+            new DestinationStreamRunner(1, "Sahyadri YouTube"),
+            new DestinationStreamRunner(2, "Sahyadri YouTube News")
+        };
+
+        for (int i = 0; i < _destRunners.Length; i++)
+        {
+            var r = _destRunners[i];
+            r.OnStatsUpdated += (runner, stats) =>
+            {
+                if (IsDisposed) return;
+                try { BeginInvoke(new Action(UpdateOverallStats)); } catch { }
+            };
+            r.OnProcessExited += (runner, code) =>
+            {
+                if (IsDisposed) return;
+                try
+                {
+                    BeginInvoke(new Action(() =>
+                    {
+                        if (IsDisposed) return;
+                        UpdateDestinationButtons();
+                        UpdateOverallStreamStatus();
+                    }));
+                }
+                catch { }
+            };
+            r.OnLog += msg => AppendLog(msg);
+        }
+
         InitializeForm();
         InitializeTopHeader();
         InitializeWorkspace();
@@ -156,12 +187,14 @@ public sealed class MainForm : Form
     private void InitializeForm()
     {
         Text = "Sahyadri DeckLink Broadcaster (x64 Release)";
+        FormBorderStyle = FormBorderStyle.FixedSingle;
+        MaximizeBox = false;
         Size = new Size(720, 800);
-        MinimumSize = new Size(680, 770);
+        MinimumSize = new Size(720, 800);
+        MaximumSize = new Size(720, 800);
         StartPosition = FormStartPosition.CenterScreen;
         Font = new Font("Segoe UI", 9f);
         Icon = SystemIcons.Application;
-        MaximizeBox = false;
     }
 
     private void InitializeTopHeader()
@@ -214,7 +247,7 @@ public sealed class MainForm : Form
                 bool isFile = FfmpegStreamRunner.IsFileSource(_config.DeckLinkDevice);
                 _formatComboBox.Enabled = !isFile;
 
-                if (_runner.IsRunning && _runner.CurrentMode == RunnerMode.StandbyPreview)
+                if (_runner.IsRunning && GetActiveStreamCount() == 0)
                 {
                     _runner.Stop();
                     _runner.StartStandbyPreview(_config);
@@ -251,7 +284,7 @@ public sealed class MainForm : Form
             {
                 _config.VideoStandardCode = item.Code;
                 _settings.Save();
-                if (_runner.IsRunning && _runner.CurrentMode == RunnerMode.StandbyPreview)
+                if (_runner.IsRunning && GetActiveStreamCount() == 0)
                 {
                     _runner.Stop();
                     _runner.StartStandbyPreview(_config);
@@ -267,49 +300,39 @@ public sealed class MainForm : Form
         _statusBadge.Font = new Font("Segoe UI", 8f, FontStyle.Bold);
         _statusBadge.Padding = new Padding(5, 3, 5, 3);
         _statusBadge.AutoSize = true;
-        _statusBadge.Location = new Point(445, 9);
+        _statusBadge.Location = new Point(440, 9);
+        _statusBadge.SizeChanged += (s, e) => UpdateHeaderBadgePositions();
 
-        // CPU Usage Badge
+        // CPU Usage Badge (Big, prominent font)
         _cpuBadge.Text = "CPU: 0%";
-        _cpuBadge.Font = new Font("Segoe UI", 8f, FontStyle.Bold);
-        _cpuBadge.Padding = new Padding(5, 3, 5, 3);
+        _cpuBadge.Font = new Font("Segoe UI", 12.5f, FontStyle.Bold);
+        _cpuBadge.Padding = new Padding(8, 2, 8, 2);
         _cpuBadge.AutoSize = true;
-        _cpuBadge.Location = new Point(525, 9);
         _cpuBadge.BackColor = Color.FromArgb(30, 41, 59);
         _cpuBadge.ForeColor = Color.FromArgb(56, 189, 248);
+        UpdateHeaderBadgePositions();
 
-        // Row 2: Action Buttons & Options
-        _btnStartStream.Text = "🔴 STREAM";
-        _btnStartStream.Font = new Font("Segoe UI", 8.5f, FontStyle.Bold);
-        _btnStartStream.BackColor = Color.FromArgb(16, 185, 129);
-        _btnStartStream.ForeColor = Color.White;
-        _btnStartStream.FlatStyle = FlatStyle.Flat;
-        _btnStartStream.FlatAppearance.BorderSize = 0;
-        _btnStartStream.Width = 95;
-        _btnStartStream.Height = 26;
-        _btnStartStream.Location = new Point(8, 36);
-        _btnStartStream.Click += (s, e) => ToggleStreaming();
-
+        // Row 2: Action Buttons & Options (No master button, Preview and Listen on left)
         _btnPreview.Text = "👁 PREVIEW";
-        _btnPreview.Font = new Font("Segoe UI", 8f, FontStyle.Bold);
+        _btnPreview.Font = new Font("Segoe UI", 8.5f, FontStyle.Bold);
         _btnPreview.BackColor = Color.FromArgb(37, 99, 235);
         _btnPreview.ForeColor = Color.White;
         _btnPreview.FlatStyle = FlatStyle.Flat;
         _btnPreview.FlatAppearance.BorderSize = 0;
-        _btnPreview.Width = 90;
+        _btnPreview.Width = 135;
         _btnPreview.Height = 26;
-        _btnPreview.Location = new Point(109, 36);
+        _btnPreview.Location = new Point(8, 36);
         _btnPreview.Click += (s, e) => ToggleStandbyPreview();
 
         _btnListen.Text = "🎧 LISTEN";
-        _btnListen.Font = new Font("Segoe UI", 8f);
+        _btnListen.Font = new Font("Segoe UI", 8.5f);
         _btnListen.BackColor = Color.FromArgb(51, 65, 85);
         _btnListen.ForeColor = Color.FromArgb(226, 232, 240);
         _btnListen.FlatStyle = FlatStyle.Flat;
         _btnListen.FlatAppearance.BorderSize = 0;
-        _btnListen.Width = 75;
+        _btnListen.Width = 85;
         _btnListen.Height = 26;
-        _btnListen.Location = new Point(205, 36);
+        _btnListen.Location = new Point(148, 36);
         _btnListen.Click += (s, e) => ToggleAudioListen();
 
         // Logs checkbox
@@ -343,7 +366,6 @@ public sealed class MainForm : Form
         _topHeader.Controls.Add(_formatComboBox);
         _topHeader.Controls.Add(_statusBadge);
         _topHeader.Controls.Add(_cpuBadge);
-        _topHeader.Controls.Add(_btnStartStream);
         _topHeader.Controls.Add(_btnPreview);
         _topHeader.Controls.Add(_btnListen);
         _topHeader.Controls.Add(_chkShowLogs);
@@ -355,8 +377,15 @@ public sealed class MainForm : Form
         Controls.Add(_topHeader);
     }
 
+    private void UpdateHeaderBadgePositions()
+    {
+        // Maintain a clean 14px gap between the status badge and the large CPU badge
+        _cpuBadge.Location = new Point(_statusBadge.Right + 14, 5);
+    }
+
     private void LayoutTopHeaderRightControls()
     {
+        UpdateHeaderBadgePositions();
         int w = _topHeader.ClientSize.Width;
         if (w <= 0) return;
         _chkDarkMode.Location = new Point(w - 50, 40);
@@ -475,26 +504,24 @@ public sealed class MainForm : Form
         // 3. Compact Live Broadcast HUD
         _statsTable.Dock = DockStyle.Top;
         _statsTable.Height = 36;
-        _statsTable.ColumnCount = 6;
+        _statsTable.ColumnCount = 5;
         _statsTable.RowCount = 1;
         _statsTable.Margin = new Padding(0, 3, 0, 3);
 
-        for (int i = 0; i < 6; i++)
-            _statsTable.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 16.66f));
+        for (int i = 0; i < 5; i++)
+            _statsTable.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 20.0f));
 
         FormatStatLabel(_lblDuration, "TIME", "00:00:00");
         FormatStatLabel(_lblBitrate, "BITRATE", "0 kbps");
         FormatStatLabel(_lblFps, "FPS", "0.0");
         FormatStatLabel(_lblDropped, "DROPS", "0");
-        FormatStatLabel(_lblCpu, "CPU", "0%");
         FormatStatLabel(_lblSpeed, "SPEED", "1.00x");
 
         _statsTable.Controls.Add(_lblDuration, 0, 0);
         _statsTable.Controls.Add(_lblBitrate, 1, 0);
         _statsTable.Controls.Add(_lblFps, 2, 0);
         _statsTable.Controls.Add(_lblDropped, 3, 0);
-        _statsTable.Controls.Add(_lblCpu, 4, 0);
-        _statsTable.Controls.Add(_lblSpeed, 5, 0);
+        _statsTable.Controls.Add(_lblSpeed, 4, 0);
 
         // 4. Encoder Quick Panel (Compact single-line)
         _hwSettingsPanel.Dock = DockStyle.Top;
@@ -513,20 +540,27 @@ public sealed class MainForm : Form
         _encoderCombo.Font = new Font("Segoe UI", 8.5f);
         _encoderCombo.Width = 135;
         _encoderCombo.Location = new Point(78, 6);
-        _encoderCombo.Items.Add("NVENC (GPU)");
+        _encoderCombo.Items.Add("Auto (GPU/CPU)");
+        _encoderCombo.Items.Add("AMD GPU (AMF)");
+        _encoderCombo.Items.Add("NVIDIA (NVENC)");
         _encoderCombo.Items.Add("CPU (libx264)");
-        _encoderCombo.Items.Add("HEVC NVENC");
         _encoderCombo.SelectedIndex = 0;
         _encoderCombo.SelectedIndexChanged += (s, e) =>
         {
             _config.VideoEncoder = _encoderCombo.SelectedIndex switch
             {
-                0 => VideoEncoderType.H264_NVENC,
-                1 => VideoEncoderType.LibX264,
-                2 => VideoEncoderType.HEVC_NVENC,
-                _ => VideoEncoderType.H264_NVENC
+                0 => VideoEncoderType.Auto,
+                1 => VideoEncoderType.H264_AMF,
+                2 => VideoEncoderType.H264_NVENC,
+                3 => VideoEncoderType.LibX264,
+                _ => VideoEncoderType.Auto
             };
             _settings.Save();
+            if (_runner.IsRunning && GetActiveStreamCount() == 0)
+            {
+                _runner.Stop();
+                _runner.StartStandbyPreview(_config);
+            }
         };
         _hwSettingsPanel.Controls.Add(_encoderCombo);
 
@@ -548,6 +582,11 @@ public sealed class MainForm : Form
         {
             _config.VideoBitrateKbps = (int)_bitrateUpDown.Value;
             _settings.Save();
+            if (_runner.IsRunning && GetActiveStreamCount() == 0)
+            {
+                _runner.Stop();
+                _runner.StartStandbyPreview(_config);
+            }
         };
         _hwSettingsPanel.Controls.Add(_bitrateUpDown);
 
@@ -577,19 +616,19 @@ public sealed class MainForm : Form
 
         // Destination 1: Sahyadri Facebook Card
         BuildDestinationCard(_pnlFb, "Sahyadri Facebook", Color.FromArgb(59, 130, 246), 0, y,
-            _chkFb, _lblFbUrl, _txtFbUrl, _btnStreamFb, _lblFbKey, _txtFbKey, _btnToggleFbKey);
+            _lblFbTitle, _lblFbUrl, _txtFbUrl, _btnStreamFb, _lblFbKey, _txtFbKey, _btnToggleFbKey);
         _rightPanel.Controls.Add(_pnlFb);
         y += 94;
 
         // Destination 2: Sahyadri YouTube Card
         BuildDestinationCard(_pnlYt, "Sahyadri YouTube", Color.FromArgb(239, 68, 68), 1, y,
-            _chkYt, _lblYtUrl, _txtYtUrl, _btnStreamYt, _lblYtKey, _txtYtKey, _btnToggleYtKey);
+            _lblYtTitle, _lblYtUrl, _txtYtUrl, _btnStreamYt, _lblYtKey, _txtYtKey, _btnToggleYtKey);
         _rightPanel.Controls.Add(_pnlYt);
         y += 94;
 
         // Destination 3: Sahyadri YouTube News Card
         BuildDestinationCard(_pnlYtNews, "Sahyadri YouTube News", Color.FromArgb(245, 158, 11), 2, y,
-            _chkYtNews, _lblYtNewsUrl, _txtYtNewsUrl, _btnStreamYtNews, _lblYtNewsKey, _txtYtNewsKey, _btnToggleYtNewsKey);
+            _lblYtNewsTitle, _lblYtNewsUrl, _txtYtNewsUrl, _btnStreamYtNews, _lblYtNewsKey, _txtYtNewsKey, _btnToggleYtNewsKey);
         _rightPanel.Controls.Add(_pnlYtNews);
 
         _leftPanel.Resize += (s, e) => UpdateDestinationCardWidths();
@@ -605,7 +644,7 @@ public sealed class MainForm : Form
     }
 
     private void BuildDestinationCard(Panel pnl, string name, Color accentColor, int destIndex, int y,
-        CheckBox chk, Label lblUrl, TextBox txtUrl, Button btnStream, Label lblKey, TextBox txtKey, Button btnEye)
+        Label lblTitle, Label lblUrl, TextBox txtUrl, Button btnStream, Label lblKey, TextBox txtKey, Button btnEye)
     {
         int initialWidth = Math.Max(280, _leftPanel.ClientSize.Width > 0 ? _leftPanel.ClientSize.Width - 12 : 690);
         pnl.Location = new Point(6, y);
@@ -621,18 +660,11 @@ public sealed class MainForm : Form
         };
         pnl.Controls.Add(accentStrip);
 
-        chk.Text = name;
-        chk.Font = new Font("Segoe UI", 9.5f, FontStyle.Bold);
-        chk.AutoSize = true;
-        chk.Location = new Point(14, 5);
-        chk.Checked = _config.Destinations[destIndex].Enabled;
-        chk.CheckedChanged += (s, e) =>
-        {
-            _config.Destinations[destIndex].Enabled = chk.Checked;
-            _settings.Save();
-            UpdateDestinationButtons();
-        };
-        pnl.Controls.Add(chk);
+        lblTitle.Text = name;
+        lblTitle.Font = new Font("Segoe UI", 9.5f, FontStyle.Bold);
+        lblTitle.AutoSize = true;
+        lblTitle.Location = new Point(14, 5);
+        pnl.Controls.Add(lblTitle);
 
         // URL Field - Clear visible label and wide input with start-aligned text
         lblUrl.Text = "URL:";
@@ -790,7 +822,6 @@ public sealed class MainForm : Form
         _lblBitrate.ForeColor = textSec;
         _lblFps.ForeColor = textSec;
         _lblDropped.ForeColor = textSec;
-        _lblCpu.ForeColor = textSec;
         _lblSpeed.ForeColor = textSec;
 
         // CPU Badge
@@ -807,9 +838,9 @@ public sealed class MainForm : Form
         _lblKbps.ForeColor = textSec;
 
         // Destination Cards
-        ApplyCardTheme(_pnlFb, _chkFb, _lblFbUrl, _txtFbUrl, _lblFbKey, _txtFbKey, _btnToggleFbKey, bgCard, bgControl, textMain, textSec);
-        ApplyCardTheme(_pnlYt, _chkYt, _lblYtUrl, _txtYtUrl, _lblYtKey, _txtYtKey, _btnToggleYtKey, bgCard, bgControl, textMain, textSec);
-        ApplyCardTheme(_pnlYtNews, _chkYtNews, _lblYtNewsUrl, _txtYtNewsUrl, _lblYtNewsKey, _txtYtNewsKey, _btnToggleYtNewsKey, bgCard, bgControl, textMain, textSec);
+        ApplyCardTheme(_pnlFb, _lblFbTitle, _lblFbUrl, _txtFbUrl, _lblFbKey, _txtFbKey, _btnToggleFbKey, bgCard, bgControl, textMain, textSec);
+        ApplyCardTheme(_pnlYt, _lblYtTitle, _lblYtUrl, _txtYtUrl, _lblYtKey, _txtYtKey, _btnToggleYtKey, bgCard, bgControl, textMain, textSec);
+        ApplyCardTheme(_pnlYtNews, _lblYtNewsTitle, _lblYtNewsUrl, _txtYtNewsUrl, _lblYtNewsKey, _txtYtNewsKey, _btnToggleYtNewsKey, bgCard, bgControl, textMain, textSec);
 
         // Log Console
         _logPanel.BackColor = isDark ? Color.FromArgb(12, 14, 18) : Color.FromArgb(241, 245, 249);
@@ -821,11 +852,11 @@ public sealed class MainForm : Form
         _logTextBox.ForeColor = isDark ? Color.FromArgb(203, 213, 225) : Color.FromArgb(15, 23, 42);
     }
 
-    private void ApplyCardTheme(Panel pnl, CheckBox chk, Label lUrl, TextBox tUrl, Label lKey, TextBox tKey, Button bEye,
+    private void ApplyCardTheme(Panel pnl, Label lblTitle, Label lUrl, TextBox tUrl, Label lKey, TextBox tKey, Button bEye,
         Color bgCard, Color bgControl, Color textMain, Color textSec)
     {
         pnl.BackColor = bgCard;
-        chk.ForeColor = textMain;
+        lblTitle.ForeColor = textMain;
         lUrl.ForeColor = textMain;
         tUrl.BackColor = bgControl;
         tUrl.ForeColor = textMain;
@@ -865,11 +896,10 @@ public sealed class MainForm : Form
                 BeginInvoke(new Action(() =>
                 {
                     if (IsDisposed) return;
-                    _lblDuration.Text = $"TIME\n{stats.Duration:hh\\:mm\\:ss}";
-                    _lblBitrate.Text = $"BITRATE\n{stats.CurrentBitrateKbps:F0} kbps";
-                    _lblFps.Text = $"FPS\n{stats.CurrentFps:F1}";
-                    _lblDropped.Text = $"DROPS\n{stats.DroppedFrames}";
-                    _lblSpeed.Text = $"SPEED\n{stats.SpeedRatio:F2}x";
+                    if (GetActiveStreamCount() == 0)
+                    {
+                        UpdateOverallStats();
+                    }
                 }));
             }
             catch { }
@@ -883,7 +913,7 @@ public sealed class MainForm : Form
                 BeginInvoke(new Action(() =>
                 {
                     if (IsDisposed) return;
-                    UpdateStatusUi(status, text);
+                    UpdateOverallStreamStatus();
                 }));
             }
             catch { }
@@ -899,7 +929,7 @@ public sealed class MainForm : Form
                 BeginInvoke(new Action(() =>
                 {
                     if (IsDisposed) return;
-                    UpdateStatusUi(StreamStatus.Offline, "OFFLINE");
+                    UpdateOverallStreamStatus();
                     _standbyWatermark.Visible = true;
                     _standbyWatermark.Text = $"OFFLINE (Code {code})";
                     _previewBox.Image?.Dispose();
@@ -910,124 +940,161 @@ public sealed class MainForm : Form
         };
     }
 
-    private void UpdateStatusUi(StreamStatus status, string text)
+    private int GetActiveStreamCount()
     {
-        _statusBadge.Text = text;
-        switch (status)
+        if (_destRunners == null) return 0;
+        int count = 0;
+        for (int i = 0; i < _destRunners.Length; i++)
         {
-            case StreamStatus.OnAir:
-                _statusBadge.BackColor = Color.FromArgb(239, 68, 68);
-                _statusBadge.ForeColor = Color.White;
-                _btnStartStream.Text = "⏹ STOP";
-                _btnStartStream.BackColor = Color.FromArgb(220, 38, 38);
-                _btnPreview.Enabled = false;
-                _deviceComboBox.Enabled = false;
-                _formatComboBox.Enabled = false;
-                break;
+            if (_destRunners[i].IsRunning) count++;
+        }
+        return count;
+    }
 
-            case StreamStatus.StandbyPreview:
+    private void UpdateOverallStreamStatus()
+    {
+        int activeCount = GetActiveStreamCount();
+
+        if (activeCount > 0)
+        {
+            _statusBadge.Text = "🔴 ON AIR";
+            _statusBadge.BackColor = Color.FromArgb(239, 68, 68);
+            _statusBadge.ForeColor = Color.White;
+
+            _btnPreview.Enabled = false;
+            _deviceComboBox.Enabled = false;
+            _formatComboBox.Enabled = false;
+            _encoderCombo.Enabled = false;
+            _bitrateUpDown.Enabled = false;
+        }
+        else
+        {
+            _btnPreview.Enabled = true;
+            _deviceComboBox.Enabled = true;
+            _formatComboBox.Enabled = !FfmpegStreamRunner.IsFileSource(_config.DeckLinkDevice);
+            _encoderCombo.Enabled = true;
+            _bitrateUpDown.Enabled = true;
+
+            if (_runner.IsRunning)
+            {
+                _statusBadge.Text = "👁 STANDBY PREVIEW";
                 _statusBadge.BackColor = Color.FromArgb(245, 158, 11);
                 _statusBadge.ForeColor = Color.Black;
                 _btnPreview.Text = "⏹ STOP PREVIEW";
                 _btnPreview.BackColor = Color.FromArgb(217, 119, 6);
-                _btnStartStream.Enabled = true;
-                _deviceComboBox.Enabled = true;
-                _formatComboBox.Enabled = !FfmpegStreamRunner.IsFileSource(_config.DeckLinkDevice);
-                break;
-
-            case StreamStatus.Offline:
-            default:
+            }
+            else
+            {
+                _statusBadge.Text = "OFFLINE";
                 _statusBadge.BackColor = Color.FromArgb(47, 55, 70);
                 _statusBadge.ForeColor = Color.FromArgb(148, 163, 184);
-                _btnStartStream.Text = "🔴 STREAM";
-                _btnStartStream.BackColor = Color.FromArgb(16, 185, 129);
                 _btnPreview.Text = "👁 PREVIEW";
                 _btnPreview.BackColor = Color.FromArgb(37, 99, 235);
-                _btnStartStream.Enabled = true;
-                _btnPreview.Enabled = true;
-                _deviceComboBox.Enabled = true;
-                _formatComboBox.Enabled = !FfmpegStreamRunner.IsFileSource(_config.DeckLinkDevice);
-                break;
+            }
         }
 
+        UpdateHeaderBadgePositions();
         UpdateDestinationButtons();
+        UpdateOverallStats();
+    }
+
+    private void UpdateOverallStats()
+    {
+        int activeCount = 0;
+        double totalBitrate = 0;
+        double maxFps = 0;
+        long totalDrops = 0;
+        double avgSpeed = 1.0;
+        TimeSpan maxDuration = TimeSpan.Zero;
+
+        if (_destRunners != null)
+        {
+            for (int i = 0; i < _destRunners.Length; i++)
+            {
+                var r = _destRunners[i];
+                if (r.IsRunning)
+                {
+                    activeCount++;
+                    totalBitrate += r.CurrentStats.CurrentBitrateKbps;
+                    if (r.CurrentStats.CurrentFps > maxFps) maxFps = r.CurrentStats.CurrentFps;
+                    totalDrops += r.CurrentStats.DroppedFrames;
+                    avgSpeed = r.CurrentStats.SpeedRatio;
+                    if (r.CurrentStats.Duration > maxDuration) maxDuration = r.CurrentStats.Duration;
+                }
+            }
+        }
+
+        if (activeCount > 0)
+        {
+            _lblDuration.Text = $"TIME\n{maxDuration:hh\\:mm\\:ss}";
+            _lblBitrate.Text = activeCount > 1
+                ? $"BITRATE ({activeCount}x)\n{totalBitrate:F0} kbps"
+                : $"BITRATE\n{totalBitrate:F0} kbps";
+            _lblFps.Text = $"FPS\n{maxFps:F1}";
+            _lblDropped.Text = $"DROPS\n{totalDrops}";
+            _lblSpeed.Text = $"SPEED\n{avgSpeed:F2}x";
+        }
+        else if (_runner.IsRunning)
+        {
+            _lblDuration.Text = $"TIME\n{_runner.CurrentStats.Duration:hh\\:mm\\:ss}";
+            _lblBitrate.Text = "BITRATE\nSTANDBY";
+            _lblFps.Text = $"FPS\n{_runner.CurrentStats.CurrentFps:F1}";
+            _lblDropped.Text = $"DROPS\n{_runner.CurrentStats.DroppedFrames}";
+            _lblSpeed.Text = $"SPEED\n{_runner.CurrentStats.SpeedRatio:F2}x";
+        }
+        else
+        {
+            _lblDuration.Text = "TIME\n00:00:00";
+            _lblBitrate.Text = "BITRATE\n0 kbps";
+            _lblFps.Text = "FPS\n0.0";
+            _lblDropped.Text = "DROPS\n0";
+            _lblSpeed.Text = "SPEED\n1.00x";
+        }
     }
 
     private void ToggleDestinationStream(int destIndex)
     {
-        if (destIndex < 0 || destIndex >= _config.Destinations.Count) return;
+        if (_destRunners == null || destIndex < 0 || destIndex >= _destRunners.Length) return;
+        if (destIndex >= _config.Destinations.Count) return;
+
         var dest = _config.Destinations[destIndex];
+        var runner = _destRunners[destIndex];
 
-        if (_runner.IsRunning && _runner.CurrentMode == RunnerMode.LiveStream)
+        if (runner.IsRunning)
         {
-            if (dest.Enabled)
-            {
-                dest.Enabled = false;
-                UpdateDestinationCheckboxes();
-                _settings.Save();
-
-                int remaining = _config.Destinations.FindAll(d => d.Enabled && !string.IsNullOrWhiteSpace(d.FullUrl)).Count;
-                if (remaining == 0)
-                {
-                    _runner.Stop();
-                    UpdateStatusUi(StreamStatus.Offline, "OFFLINE");
-                }
-                else
-                {
-                    _runner.Stop();
-                    _runner.StartLiveStream(_config);
-                }
-            }
-            else
-            {
-                if (string.IsNullOrWhiteSpace(dest.FullUrl))
-                {
-                    MessageBox.Show($"Please enter a valid Stream Key for {dest.Name}.", "Stream Key Required", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    return;
-                }
-                dest.Enabled = true;
-                UpdateDestinationCheckboxes();
-                _settings.Save();
-                _runner.Stop();
-                _runner.StartLiveStream(_config);
-            }
+            runner.Stop();
+            dest.Enabled = false;
+            _settings.Save();
+            UpdateDestinationButtons();
+            UpdateOverallStreamStatus();
         }
         else
         {
-            if (string.IsNullOrWhiteSpace(dest.FullUrl))
+            if (string.IsNullOrWhiteSpace(dest.StreamKey) || string.IsNullOrWhiteSpace(dest.FullUrl))
             {
                 MessageBox.Show($"Please enter a valid Stream Key for {dest.Name}.", "Stream Key Required", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
-            dest.Enabled = true;
-            UpdateDestinationCheckboxes();
-            _settings.Save();
-            _runner.Stop();
-            _runner.StartLiveStream(_config);
-        }
-    }
 
-    private void UpdateDestinationCheckboxes()
-    {
-        if (_config.Destinations.Count > 0) _chkFb.Checked = _config.Destinations[0].Enabled;
-        if (_config.Destinations.Count > 1) _chkYt.Checked = _config.Destinations[1].Enabled;
-        if (_config.Destinations.Count > 2) _chkYtNews.Checked = _config.Destinations[2].Enabled;
-        UpdateDestinationButtons();
+            dest.Enabled = true;
+            _settings.Save();
+            runner.Start(_config, dest);
+            UpdateDestinationButtons();
+            UpdateOverallStreamStatus();
+        }
     }
 
     private void UpdateDestinationButtons()
     {
-        bool isLive = _runner.IsRunning && _runner.CurrentMode == RunnerMode.LiveStream;
-        UpdateDestBtn(_btnStreamFb, 0, isLive);
-        UpdateDestBtn(_btnStreamYt, 1, isLive);
-        UpdateDestBtn(_btnStreamYtNews, 2, isLive);
+        UpdateDestBtn(_btnStreamFb, 0);
+        UpdateDestBtn(_btnStreamYt, 1);
+        UpdateDestBtn(_btnStreamYtNews, 2);
     }
 
-    private void UpdateDestBtn(Button btn, int index, bool isLive)
+    private void UpdateDestBtn(Button btn, int index)
     {
-        if (index >= _config.Destinations.Count) return;
-        var dest = _config.Destinations[index];
-        if (isLive && dest.Enabled)
+        if (_destRunners == null || index >= _destRunners.Length) return;
+        if (_destRunners[index].IsRunning)
         {
             btn.Text = "⏹ STOP";
             btn.BackColor = Color.FromArgb(220, 38, 38);
@@ -1039,38 +1106,23 @@ public sealed class MainForm : Form
         }
     }
 
-    private void ToggleStreaming()
+    private void ToggleStandbyPreview()
     {
-        if (_runner.IsRunning && _runner.CurrentMode == RunnerMode.LiveStream)
+        if (_runner.IsRunning)
         {
-            _runner.Stop();
-            UpdateStatusUi(StreamStatus.Offline, "OFFLINE");
-        }
-        else
-        {
-            int activeCount = _config.Destinations.FindAll(d => d.Enabled && !string.IsNullOrWhiteSpace(d.FullUrl)).Count;
-            if (activeCount == 0)
+            if (GetActiveStreamCount() > 0)
             {
-                MessageBox.Show("Please enable at least one destination (Sahyadri Facebook, YouTube, or YouTube News) with a valid Stream Key.", "Destination Required", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show("Cannot stop preview while streaming is ON AIR.", "Streaming Active", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
 
             _runner.Stop();
-            _runner.StartLiveStream(_config);
-        }
-    }
-
-    private void ToggleStandbyPreview()
-    {
-        if (_runner.IsRunning && _runner.CurrentMode == RunnerMode.StandbyPreview)
-        {
-            _runner.Stop();
-            UpdateStatusUi(StreamStatus.Offline, "OFFLINE");
+            UpdateOverallStreamStatus();
         }
         else
         {
-            _runner.Stop();
             _runner.StartStandbyPreview(_config);
+            UpdateOverallStreamStatus();
         }
     }
 
@@ -1140,9 +1192,10 @@ public sealed class MainForm : Form
 
         _encoderCombo.SelectedIndex = _config.VideoEncoder switch
         {
-            VideoEncoderType.H264_NVENC => 0,
-            VideoEncoderType.LibX264 => 1,
-            VideoEncoderType.HEVC_NVENC => 2,
+            VideoEncoderType.Auto => 0,
+            VideoEncoderType.H264_AMF => 1,
+            VideoEncoderType.H264_NVENC => 2,
+            VideoEncoderType.LibX264 => 3,
             _ => 0
         };
     }
@@ -1191,26 +1244,22 @@ public sealed class MainForm : Form
                         BeginInvoke(new Action(() =>
                         {
                             if (IsDisposed) return;
-                            _lblCpu.Text = $"CPU\n{cpuPercent:F0}%";
                             _cpuBadge.Text = $"CPU: {cpuPercent:F0}%";
 
                             if (cpuPercent > 80)
                             {
                                 _cpuBadge.BackColor = Color.FromArgb(220, 38, 38);
                                 _cpuBadge.ForeColor = Color.White;
-                                _lblCpu.ForeColor = Color.FromArgb(239, 68, 68);
                             }
                             else if (cpuPercent > 50)
                             {
                                 _cpuBadge.BackColor = Color.FromArgb(217, 119, 6);
                                 _cpuBadge.ForeColor = Color.White;
-                                _lblCpu.ForeColor = Color.FromArgb(245, 158, 11);
                             }
                             else
                             {
                                 _cpuBadge.BackColor = _settings.DarkMode ? Color.FromArgb(30, 41, 59) : Color.FromArgb(226, 232, 240);
                                 _cpuBadge.ForeColor = _settings.DarkMode ? Color.FromArgb(56, 189, 248) : Color.FromArgb(2, 132, 199);
-                                _lblCpu.ForeColor = _settings.DarkMode ? Color.FromArgb(203, 213, 225) : Color.FromArgb(30, 41, 59);
                             }
                         }));
                     }
@@ -1238,6 +1287,13 @@ public sealed class MainForm : Form
         base.OnFormClosing(e);
 
         _cpuTimer.Stop();
+        if (_destRunners != null)
+        {
+            for (int i = 0; i < _destRunners.Length; i++)
+            {
+                try { _destRunners[i].Dispose(); } catch { }
+            }
+        }
         _runner.Stop();
         _audioMonitor.Stop();
         _fullscreenForm?.Dispose();

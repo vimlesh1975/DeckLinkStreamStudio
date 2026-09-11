@@ -13,6 +13,8 @@ public enum StreamingProtocol
 
 public enum VideoEncoderType
 {
+    Auto,
+    H264_AMF,
     H264_NVENC,
     HEVC_NVENC,
     LibX264
