@@ -1,0 +1,28 @@
+# Intermediate build files
+obj/
+bin/Debug/
+*.user
+*.suo
+.vs/
+.vscode/
+
+# Logs
+*.log
+**/*.log
+
+# Settings (stored in AppData, never in repo)
+appsettings.json
+**/appsettings.json
+*.settings.json
+settings.json
+**/settings.json
+
+# Ignore everything in bin by default
+bin/**
+
+# Explicitly allow ONLY win-x64 Release binaries
+!bin/
+!bin/Release/
+!bin/Release/net10.0-windows/
+!bin/Release/net10.0-windows/win-x64/
+!bin/Release/net10.0-windows/win-x64/**

@@ -1,0 +1,40 @@
+{
+  "runtimeTarget": {
+    "name": ".NETCoreApp,Version=v10.0/win-x64",
+    "signature": ""
+  },
+  "compilationOptions": {},
+  "targets": {
+    ".NETCoreApp,Version=v10.0": {},
+    ".NETCoreApp,Version=v10.0/win-x64": {
+      "DeckLinkStreamStudio/1.0.0": {
+        "dependencies": {
+          "DeckLinkAPI.Interop": "1.0.0.0"
+        },
+        "runtime": {
+          "DeckLinkStreamStudio.dll": {}
+        }
+      },
+      "DeckLinkAPI.Interop/1.0.0.0": {
+        "runtime": {
+          "DeckLinkAPI.Interop.dll": {
+            "assemblyVersion": "1.0.0.0",
+            "fileVersion": "1.0.0.0"
+          }
+        }
+      }
+    }
+  },
+  "libraries": {
+    "DeckLinkStreamStudio/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "DeckLinkAPI.Interop/1.0.0.0": {
+      "type": "reference",
+      "serviceable": false,
+      "sha512": ""
+    }
+  }
+}
