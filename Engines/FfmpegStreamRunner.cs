@@ -26,10 +26,10 @@ public sealed class FfmpegStreamRunner : IDisposable
     private bool _isDisposed;
     private readonly string _ffmpegPath;
 
-    public const int PreviewCenterWidth = 800;
-    public const int PreviewTotalHeight = 450;
-    public const int PreviewMeterWidth = 24;
-    public const int PreviewTotalWidth = PreviewCenterWidth + (PreviewMeterWidth * 2); // 848 px
+    public const int PreviewCenterWidth = 444;
+    public const int PreviewTotalHeight = 250;
+    public const int PreviewMeterWidth = 18;
+    public const int PreviewTotalWidth = PreviewCenterWidth + (PreviewMeterWidth * 2); // 480 px
 
     public event Action<string>? OnLog;
     public event Action<StreamStats>? OnStatsUpdated;
@@ -228,8 +228,8 @@ public sealed class FfmpegStreamRunner : IDisposable
     {
         return "[0:a]aresample=48000,aformat=sample_fmts=s16:channel_layouts=stereo,asplit=2[l_src][r_src];" +
                $"[0:v]scale={PreviewCenterWidth}:{PreviewTotalHeight}:force_original_aspect_ratio=decrease,pad={PreviewCenterWidth}:{PreviewTotalHeight}:(ow-iw)/2:(oh-ih)/2,fps={fps},format=yuv420p[v_scaled];" +
-               $"[l_src]pan=mono|c0=c0,showvolume=r={fps}:w={PreviewMeterWidth}:h={PreviewTotalHeight}:f=0.92:b=1:t=0:v=1:dm=1:o=v:ds=log:p=0.18:m=r,scale={PreviewMeterWidth}:{PreviewTotalHeight},format=yuv420p[left_bar];" +
-               $"[r_src]pan=mono|c0=c1,showvolume=r={fps}:w={PreviewMeterWidth}:h={PreviewTotalHeight}:f=0.92:b=1:t=0:v=1:dm=1:o=v:ds=log:p=0.18:m=r,scale={PreviewMeterWidth}:{PreviewTotalHeight},format=yuv420p[right_bar];" +
+               $"[l_src]pan=mono|c0=c0,showvolume=r={fps}:w=80:h={PreviewTotalHeight}:f=0.92:b=1:t=0:v=1:dm=1:o=v:ds=log:p=0.18:m=r,scale={PreviewMeterWidth}:{PreviewTotalHeight},format=yuv420p[left_bar];" +
+               $"[r_src]pan=mono|c0=c1,showvolume=r={fps}:w=80:h={PreviewTotalHeight}:f=0.92:b=1:t=0:v=1:dm=1:o=v:ds=log:p=0.18:m=r,scale={PreviewMeterWidth}:{PreviewTotalHeight},format=yuv420p[right_bar];" +
                "[left_bar][v_scaled][right_bar]hstack=inputs=3,format=bgr24[tx_preview]";
     }
 
@@ -281,8 +281,8 @@ public sealed class FfmpegStreamRunner : IDisposable
         sb.Append($"[v_raw_preview]scale={PreviewCenterWidth}:{PreviewTotalHeight}:force_original_aspect_ratio=decrease,pad={PreviewCenterWidth}:{PreviewTotalHeight}:(ow-iw)/2:(oh-ih)/2,fps={previewFps},format=yuv420p[v_scaled];");
 
         // Meters
-        sb.Append($"[l_src]pan=mono|c0=c0,showvolume=r={previewFps}:w={PreviewMeterWidth}:h={PreviewTotalHeight}:f=0.92:b=1:t=0:v=1:dm=1:o=v:ds=log:p=0.18:m=r,scale={PreviewMeterWidth}:{PreviewTotalHeight},format=yuv420p[left_bar];");
-        sb.Append($"[r_src]pan=mono|c0=c1,showvolume=r={previewFps}:w={PreviewMeterWidth}:h={PreviewTotalHeight}:f=0.92:b=1:t=0:v=1:dm=1:o=v:ds=log:p=0.18:m=r,scale={PreviewMeterWidth}:{PreviewTotalHeight},format=yuv420p[right_bar];");
+        sb.Append($"[l_src]pan=mono|c0=c0,showvolume=r={previewFps}:w=80:h={PreviewTotalHeight}:f=0.92:b=1:t=0:v=1:dm=1:o=v:ds=log:p=0.18:m=r,scale={PreviewMeterWidth}:{PreviewTotalHeight},format=yuv420p[left_bar];");
+        sb.Append($"[r_src]pan=mono|c0=c1,showvolume=r={previewFps}:w=80:h={PreviewTotalHeight}:f=0.92:b=1:t=0:v=1:dm=1:o=v:ds=log:p=0.18:m=r,scale={PreviewMeterWidth}:{PreviewTotalHeight},format=yuv420p[right_bar];");
 
         // Composite preview
         sb.Append("[left_bar][v_scaled][right_bar]hstack=inputs=3,format=bgr24[tx_preview]");
