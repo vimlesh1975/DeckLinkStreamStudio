@@ -26,9 +26,8 @@ public sealed class MainForm : Form
     private readonly ComboBox _deviceComboBox = new();
     private readonly Label _lblFormat = new();
     private readonly ComboBox _formatComboBox = new();
-    private readonly Label _lblPort = new();
-    private readonly ComboBox _videoInputComboBox = new();
     private readonly Label _statusBadge = new();
+    private readonly Label _cpuBadge = new();
     private readonly Button _btnStartStream = new();
     private readonly Button _btnPreview = new();
     private readonly Button _btnListen = new();
@@ -135,10 +134,15 @@ public sealed class MainForm : Form
         HookRunnerEvents();
         LoadConfigIntoUi();
 
+        // Ensure proper WinForms docking order: _leftPanel (DockStyle.Fill) must be at front
+        // so _topHeader (DockStyle.Top) does not overlap or cut off the top of the video preview.
+        _leftPanel.BringToFront();
+
         ApplyTheme(_settings.DarkMode);
 
         _cpuTimer.Tick += (s, e) => UpdateCpuUsage();
         _cpuTimer.Start();
+        UpdateCpuUsage();
 
         Shown += (s, e) =>
         {
@@ -152,8 +156,8 @@ public sealed class MainForm : Form
     private void InitializeForm()
     {
         Text = "Sahyadri DeckLink Broadcaster (x64 Release)";
-        Size = new Size(720, 765);
-        MinimumSize = new Size(650, 680);
+        Size = new Size(720, 800);
+        MinimumSize = new Size(680, 770);
         StartPosition = FormStartPosition.CenterScreen;
         Font = new Font("Segoe UI", 9f);
         Icon = SystemIcons.Application;
@@ -186,6 +190,19 @@ public sealed class MainForm : Form
 
         foreach (var d in _devices) _deviceComboBox.Items.Add(d.Name);
         int devIdx = _deviceComboBox.FindStringExact(_config.DeckLinkDevice);
+        if (devIdx < 0)
+        {
+            for (int i = 0; i < _deviceComboBox.Items.Count; i++)
+            {
+                var itemStr = _deviceComboBox.Items[i]?.ToString() ?? "";
+                if (itemStr.Contains("go1080p25", StringComparison.OrdinalIgnoreCase) &&
+                    _config.DeckLinkDevice.Contains("go1080p25", StringComparison.OrdinalIgnoreCase))
+                {
+                    devIdx = i;
+                    break;
+                }
+            }
+        }
         _deviceComboBox.SelectedIndex = devIdx >= 0 ? devIdx : 0;
         _deviceComboBox.SelectedIndexChanged += (s, e) =>
         {
@@ -193,6 +210,10 @@ public sealed class MainForm : Form
             {
                 _config.DeckLinkDevice = _deviceComboBox.SelectedItem.ToString()!;
                 _settings.Save();
+
+                bool isFile = FfmpegStreamRunner.IsFileSource(_config.DeckLinkDevice);
+                _formatComboBox.Enabled = !isFile;
+
                 if (_runner.IsRunning && _runner.CurrentMode == RunnerMode.StandbyPreview)
                 {
                     _runner.Stop();
@@ -238,37 +259,24 @@ public sealed class MainForm : Form
             }
         };
 
-        // Port (SDI/HDMI)
-        _lblPort.Text = "PORT:";
-        _lblPort.Font = new Font("Segoe UI", 8f, FontStyle.Bold);
-        _lblPort.AutoSize = true;
-        _lblPort.Location = new Point(437, 12);
-
-        _videoInputComboBox.DropDownStyle = ComboBoxStyle.DropDownList;
-        _videoInputComboBox.FlatStyle = FlatStyle.Flat;
-        _videoInputComboBox.Font = new Font("Segoe UI", 8.5f);
-        _videoInputComboBox.Width = 50;
-        _videoInputComboBox.Location = new Point(477, 8);
-        _videoInputComboBox.Items.Add("sdi");
-        _videoInputComboBox.Items.Add("hdmi");
-        _videoInputComboBox.SelectedIndex = _config.VideoInput.Equals("hdmi", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
-        _videoInputComboBox.SelectedIndexChanged += (s, e) =>
-        {
-            _config.VideoInput = _videoInputComboBox.SelectedItem?.ToString() ?? "sdi";
-            _settings.Save();
-            if (_runner.IsRunning && _runner.CurrentMode == RunnerMode.StandbyPreview)
-            {
-                _runner.Stop();
-                _runner.StartStandbyPreview(_config);
-            }
-        };
+        bool isFileInitial = FfmpegStreamRunner.IsFileSource(_config.DeckLinkDevice);
+        _formatComboBox.Enabled = !isFileInitial;
 
         // Status Badge
         _statusBadge.Text = "OFFLINE";
         _statusBadge.Font = new Font("Segoe UI", 8f, FontStyle.Bold);
         _statusBadge.Padding = new Padding(5, 3, 5, 3);
         _statusBadge.AutoSize = true;
-        _statusBadge.Location = new Point(535, 9);
+        _statusBadge.Location = new Point(445, 9);
+
+        // CPU Usage Badge
+        _cpuBadge.Text = "CPU: 0%";
+        _cpuBadge.Font = new Font("Segoe UI", 8f, FontStyle.Bold);
+        _cpuBadge.Padding = new Padding(5, 3, 5, 3);
+        _cpuBadge.AutoSize = true;
+        _cpuBadge.Location = new Point(525, 9);
+        _cpuBadge.BackColor = Color.FromArgb(30, 41, 59);
+        _cpuBadge.ForeColor = Color.FromArgb(56, 189, 248);
 
         // Row 2: Action Buttons & Options
         _btnStartStream.Text = "🔴 STREAM";
@@ -333,9 +341,8 @@ public sealed class MainForm : Form
         _topHeader.Controls.Add(_deviceComboBox);
         _topHeader.Controls.Add(_lblFormat);
         _topHeader.Controls.Add(_formatComboBox);
-        _topHeader.Controls.Add(_lblPort);
-        _topHeader.Controls.Add(_videoInputComboBox);
         _topHeader.Controls.Add(_statusBadge);
+        _topHeader.Controls.Add(_cpuBadge);
         _topHeader.Controls.Add(_btnStartStream);
         _topHeader.Controls.Add(_btnPreview);
         _topHeader.Controls.Add(_btnListen);
@@ -377,16 +384,16 @@ public sealed class MainForm : Form
 
     private void InitializeLeftVideoPanel()
     {
-        // 1. Video Container (Exact 480x250 video preview)
+        // 1. Video Container (480x250 video preview + VU meters)
         _videoContainer.Dock = DockStyle.Top;
-        _videoContainer.Height = 250;
+        _videoContainer.Height = 252;
         _videoContainer.BackColor = Color.FromArgb(12, 14, 18);
 
         _previewBox.Dock = DockStyle.None;
         _previewBox.Size = new Size(480, 250);
         _previewBox.SizeMode = PictureBoxSizeMode.Normal;
         _previewBox.BackColor = Color.Black;
-        _previewBox.Location = new Point(Math.Max(0, (_videoContainer.ClientSize.Width - 480) / 2), 0);
+        _previewBox.Location = new Point(Math.Max(0, (_videoContainer.ClientSize.Width - 480) / 2), 1);
         _previewBox.DoubleClick += (s, e) => OpenFullscreen();
 
         _standbyWatermark.Text = "STANDBY / NO SIGNAL\n(Left & Right Peak Audio Meters Ready)";
@@ -400,7 +407,10 @@ public sealed class MainForm : Form
 
         _videoContainer.Resize += (s, e) =>
         {
-            _previewBox.Location = new Point(Math.Max(0, (_videoContainer.ClientSize.Width - 480) / 2), 0);
+            _previewBox.Location = new Point(
+                Math.Max(0, (_videoContainer.ClientSize.Width - 480) / 2),
+                Math.Max(0, (_videoContainer.ClientSize.Height - 250) / 2)
+            );
         };
 
         // 2. Toolbar under Video
@@ -754,7 +764,6 @@ public sealed class MainForm : Form
         _topHeader.BackColor = bgHeader;
         _lblCard.ForeColor = textSec;
         _lblFormat.ForeColor = textSec;
-        _lblPort.ForeColor = textSec;
         _chkShowLogs.ForeColor = textMain;
         _chkDarkMode.ForeColor = textMain;
 
@@ -762,8 +771,6 @@ public sealed class MainForm : Form
         _deviceComboBox.ForeColor = textMain;
         _formatComboBox.BackColor = bgControl;
         _formatComboBox.ForeColor = textMain;
-        _videoInputComboBox.BackColor = bgControl;
-        _videoInputComboBox.ForeColor = textMain;
 
         _leftPanel.BackColor = bgMain;
         _rightPanel.BackColor = bgMain;
@@ -785,6 +792,10 @@ public sealed class MainForm : Form
         _lblDropped.ForeColor = textSec;
         _lblCpu.ForeColor = textSec;
         _lblSpeed.ForeColor = textSec;
+
+        // CPU Badge
+        _cpuBadge.BackColor = isDark ? Color.FromArgb(30, 41, 59) : Color.FromArgb(226, 232, 240);
+        _cpuBadge.ForeColor = isDark ? Color.FromArgb(56, 189, 248) : Color.FromArgb(2, 132, 199);
 
         _hwSettingsPanel.BackColor = bgCard;
         _lblHwTitle.ForeColor = textMain;
@@ -912,7 +923,6 @@ public sealed class MainForm : Form
                 _btnPreview.Enabled = false;
                 _deviceComboBox.Enabled = false;
                 _formatComboBox.Enabled = false;
-                _videoInputComboBox.Enabled = false;
                 break;
 
             case StreamStatus.StandbyPreview:
@@ -922,8 +932,7 @@ public sealed class MainForm : Form
                 _btnPreview.BackColor = Color.FromArgb(217, 119, 6);
                 _btnStartStream.Enabled = true;
                 _deviceComboBox.Enabled = true;
-                _formatComboBox.Enabled = true;
-                _videoInputComboBox.Enabled = true;
+                _formatComboBox.Enabled = !FfmpegStreamRunner.IsFileSource(_config.DeckLinkDevice);
                 break;
 
             case StreamStatus.Offline:
@@ -937,8 +946,7 @@ public sealed class MainForm : Form
                 _btnStartStream.Enabled = true;
                 _btnPreview.Enabled = true;
                 _deviceComboBox.Enabled = true;
-                _formatComboBox.Enabled = true;
-                _videoInputComboBox.Enabled = true;
+                _formatComboBox.Enabled = !FfmpegStreamRunner.IsFileSource(_config.DeckLinkDevice);
                 break;
         }
 
@@ -1111,7 +1119,10 @@ public sealed class MainForm : Form
     {
         if (_fullscreenForm == null || _fullscreenForm.IsDisposed)
         {
-            _fullscreenForm = new FullscreenPreviewForm($"{_config.DeckLinkDevice} ({_config.VideoStandardCode})");
+            var title = FfmpegStreamRunner.IsFileSource(_config.DeckLinkDevice)
+                ? $"{_config.DeckLinkDevice} (Loop)"
+                : $"{_config.DeckLinkDevice} ({_config.VideoStandardCode})";
+            _fullscreenForm = new FullscreenPreviewForm(title);
             _fullscreenForm.FormClosed += (s, e) => _fullscreenForm = null;
             _fullscreenForm.Show();
         }
@@ -1173,8 +1184,38 @@ public sealed class MainForm : Form
             if (sysDiff > 0)
             {
                 double cpuPercent = Math.Clamp((1.0 - ((double)idlDiff / sysDiff)) * 100.0, 0.0, 100.0);
-                _lblCpu.Text = $"CPU\n{cpuPercent:F0}%";
-                _lblCpu.ForeColor = cpuPercent > 80 ? Color.FromArgb(239, 68, 68) : (_settings.DarkMode ? Color.FromArgb(203, 213, 225) : Color.FromArgb(30, 41, 59));
+                if (!IsDisposed)
+                {
+                    try
+                    {
+                        BeginInvoke(new Action(() =>
+                        {
+                            if (IsDisposed) return;
+                            _lblCpu.Text = $"CPU\n{cpuPercent:F0}%";
+                            _cpuBadge.Text = $"CPU: {cpuPercent:F0}%";
+
+                            if (cpuPercent > 80)
+                            {
+                                _cpuBadge.BackColor = Color.FromArgb(220, 38, 38);
+                                _cpuBadge.ForeColor = Color.White;
+                                _lblCpu.ForeColor = Color.FromArgb(239, 68, 68);
+                            }
+                            else if (cpuPercent > 50)
+                            {
+                                _cpuBadge.BackColor = Color.FromArgb(217, 119, 6);
+                                _cpuBadge.ForeColor = Color.White;
+                                _lblCpu.ForeColor = Color.FromArgb(245, 158, 11);
+                            }
+                            else
+                            {
+                                _cpuBadge.BackColor = _settings.DarkMode ? Color.FromArgb(30, 41, 59) : Color.FromArgb(226, 232, 240);
+                                _cpuBadge.ForeColor = _settings.DarkMode ? Color.FromArgb(56, 189, 248) : Color.FromArgb(2, 132, 199);
+                                _lblCpu.ForeColor = _settings.DarkMode ? Color.FromArgb(203, 213, 225) : Color.FromArgb(30, 41, 59);
+                            }
+                        }));
+                    }
+                    catch { }
+                }
             }
         }
 

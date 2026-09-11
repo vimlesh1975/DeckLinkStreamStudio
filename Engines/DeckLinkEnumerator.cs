@@ -11,9 +11,14 @@ public sealed record DeckLinkDeviceEntry(string Name, string ModelName);
 
 public static class DeckLinkEnumerator
 {
+    public const string DefaultFileSource = "go1080p25.mp4";
+
     public static List<DeckLinkDeviceEntry> GetInstalledDevices(string? ffmpegPath = null)
     {
         var devices = new List<DeckLinkDeviceEntry>();
+
+        // File-based streaming source (looping go1080p25.mp4 in exe folder)
+        devices.Add(new DeckLinkDeviceEntry(DefaultFileSource, "go1080p25.mp4 (Loop File)"));
 
         // 1. Try DeckLink COM SDK First
         try

@@ -34,10 +34,21 @@ public sealed class AudioMonitorRunner : IDisposable
 
             try
             {
+                string arguments;
+                if (FfmpegStreamRunner.IsFileSource(decklinkDevice))
+                {
+                    var filePath = FfmpegStreamRunner.ResolveMediaFilePath(decklinkDevice);
+                    arguments = $"-nodisp -loop 0 \"{filePath}\"";
+                }
+                else
+                {
+                    arguments = $"-nodisp -f decklink -audio_input embedded -channels 2 -i \"{decklinkDevice}\"";
+                }
+
                 var psi = new ProcessStartInfo
                 {
                     FileName = ffplayPath,
-                    Arguments = $"-nodisp -f decklink -audio_input embedded -channels 2 -i \"{decklinkDevice}\"",
+                    Arguments = arguments,
                     UseShellExecute = false,
                     CreateNoWindow = true
                 };

@@ -65,6 +65,18 @@ public sealed class FfmpegStreamRunner : IDisposable
         if (File.Exists(localExe))
             return localExe;
 
+        var localToolsExe = Path.Combine(baseDir, "tools", "ffmpeg.exe");
+        if (File.Exists(localToolsExe))
+            return localToolsExe;
+
+        var curToolsExe = Path.Combine(Directory.GetCurrentDirectory(), "tools", "ffmpeg.exe");
+        if (File.Exists(curToolsExe))
+            return curToolsExe;
+
+        var newpToolsExe = @"d:\___newp\DeckLinkStreamStudio\tools\ffmpeg.exe";
+        if (File.Exists(newpToolsExe))
+            return newpToolsExe;
+
         var toolsExe = @"d:\_projects\streaming\tools\ffmpeg.exe";
         if (File.Exists(toolsExe))
             return toolsExe;
@@ -110,13 +122,109 @@ public sealed class FfmpegStreamRunner : IDisposable
         }
     }
 
+    public static bool? _isNvencSupported;
+    public static bool IsNvencAvailable()
+    {
+        if (_isNvencSupported.HasValue) return _isNvencSupported.Value;
+        try
+        {
+            var ffmpeg = ResolveFfmpegPath();
+            var psi = new ProcessStartInfo
+            {
+                FileName = ffmpeg,
+                Arguments = "-hide_banner -f lavfi -i testsrc=duration=1:size=64x64:rate=1 -c:v h264_nvenc -f null -",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardError = true
+            };
+            using var proc = Process.Start(psi);
+            if (proc != null)
+            {
+                proc.WaitForExit(1500);
+                _isNvencSupported = proc.ExitCode == 0;
+                return _isNvencSupported.Value;
+            }
+        }
+        catch { }
+        _isNvencSupported = false;
+        return false;
+    }
+
+    public static bool IsFileSource(string? source)
+    {
+        if (string.IsNullOrWhiteSpace(source)) return false;
+        var s = source.Trim();
+        return s.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase) ||
+               s.EndsWith(".mkv", StringComparison.OrdinalIgnoreCase) ||
+               s.EndsWith(".mov", StringComparison.OrdinalIgnoreCase) ||
+               s.EndsWith(".ts", StringComparison.OrdinalIgnoreCase) ||
+               s.StartsWith("file:", StringComparison.OrdinalIgnoreCase) ||
+               s.Contains("go1080p25", StringComparison.OrdinalIgnoreCase);
+    }
+
+    public static string ResolveMediaFilePath(string? fileName = "go1080p25.mp4")
+    {
+        if (string.IsNullOrWhiteSpace(fileName))
+            fileName = "go1080p25.mp4";
+
+        var cleanName = fileName.Trim();
+        if (cleanName.StartsWith("file:", StringComparison.OrdinalIgnoreCase))
+            cleanName = cleanName.Substring(5).Trim();
+
+        if (cleanName.EndsWith("(Loop)", StringComparison.OrdinalIgnoreCase))
+            cleanName = cleanName.Replace("(Loop)", "").Trim();
+
+        if (File.Exists(cleanName))
+            return Path.GetFullPath(cleanName);
+
+        var nameOnly = Path.GetFileName(cleanName);
+        if (string.IsNullOrWhiteSpace(nameOnly))
+            nameOnly = "go1080p25.mp4";
+
+        // 1. Application BaseDirectory (exe folder)
+        var exeDir = AppDomain.CurrentDomain.BaseDirectory;
+        var exePath = Path.Combine(exeDir, nameOnly);
+        if (File.Exists(exePath))
+            return exePath;
+
+        // 2. Current Directory
+        var curDir = Directory.GetCurrentDirectory();
+        var curPath = Path.Combine(curDir, nameOnly);
+        if (File.Exists(curPath))
+            return curPath;
+
+        // 3. Known fallback paths
+        var casparPath1 = Path.Combine(@"D:\casparcg\_media", nameOnly);
+        if (File.Exists(casparPath1))
+            return casparPath1;
+
+        var casparPath2 = Path.Combine(@"D:\casparcg-server-060226\media", nameOnly);
+        if (File.Exists(casparPath2))
+            return casparPath2;
+
+        return exePath;
+    }
+
+    private void AppendInputSource(StringBuilder sb, StreamConfig config)
+    {
+        if (IsFileSource(config.DeckLinkDevice))
+        {
+            var filePath = ResolveMediaFilePath(config.DeckLinkDevice);
+            sb.Append($"-stream_loop -1 -re -i \"{filePath}\" ");
+        }
+        else
+        {
+            AppendDeckLinkInput(sb, config);
+        }
+    }
+
     private string BuildStandbyPreviewArguments(StreamConfig config)
     {
         var sb = new StringBuilder();
         sb.Append("-hide_banner -loglevel warning ");
 
-        // DeckLink hardware input
-        AppendDeckLinkInput(sb, config);
+        // Input Source (File loop or DeckLink hardware)
+        AppendInputSource(sb, config);
 
         // Preview Filter: 16:9 scaled video + left/right audio VU meters
         var filter = BuildPreviewFilterGraph(config, config.PreviewFps > 0 ? config.PreviewFps : 15);
@@ -133,8 +241,8 @@ public sealed class FfmpegStreamRunner : IDisposable
         var sb = new StringBuilder();
         sb.Append("-hide_banner -loglevel info -stats ");
 
-        // DeckLink hardware input
-        AppendDeckLinkInput(sb, config);
+        // Input Source (File loop or DeckLink hardware)
+        AppendInputSource(sb, config);
 
         // Filter Complex for Preview + Deinterlacing / Scaling
         var previewFps = config.PreviewFps > 0 ? config.PreviewFps : 15;
@@ -147,9 +255,15 @@ public sealed class FfmpegStreamRunner : IDisposable
         var maxRate = $"{config.VideoBitrateKbps}k";
         var bufSize = $"{config.VideoBitrateKbps * 2}k";
 
+        var encoder = config.VideoEncoder;
+        if ((encoder == VideoEncoderType.H264_NVENC || encoder == VideoEncoderType.HEVC_NVENC) && !IsNvencAvailable())
+        {
+            encoder = VideoEncoderType.LibX264;
+        }
+
         // Video Encoder
         string videoCodecArgs;
-        switch (config.VideoEncoder)
+        switch (encoder)
         {
             case VideoEncoderType.H264_NVENC:
                 videoCodecArgs = $"-c:v h264_nvenc -preset ll -tune ll -zerolatency 1 -g {gopSize} -bf 0 -b:v {videoBitrate} -maxrate {maxRate} -bufsize {bufSize} -pix_fmt yuv420p";
@@ -200,10 +314,7 @@ public sealed class FfmpegStreamRunner : IDisposable
             sb.Append($"-format_code {config.VideoStandardCode} ");
         }
 
-        if (!string.IsNullOrWhiteSpace(config.VideoInput) && !string.Equals(config.VideoInput, "unset", StringComparison.OrdinalIgnoreCase))
-        {
-            sb.Append($"-video_input {config.VideoInput} ");
-        }
+        sb.Append("-video_input sdi ");
 
         var audioInput = string.IsNullOrWhiteSpace(config.AudioInput) ? "embedded" : config.AudioInput;
         sb.Append($"-audio_input \"{audioInput}\" ");
@@ -215,7 +326,7 @@ public sealed class FfmpegStreamRunner : IDisposable
 
     private string BuildPreviewFilterGraph(StreamConfig config, int fps)
     {
-        string deint = config.Deinterlace ? "yadif=0:-1:0," : "";
+        string deint = (config.Deinterlace && !IsFileSource(config.DeckLinkDevice)) ? "yadif=0:-1:0," : "";
         return "[0:a]aresample=48000,aformat=sample_fmts=s16:channel_layouts=stereo,asplit=2[l_src][r_src];" +
                $"[0:v]{deint}scale={PreviewCenterWidth}:{PreviewTotalHeight}:force_original_aspect_ratio=decrease,pad={PreviewCenterWidth}:{PreviewTotalHeight}:(ow-iw)/2:(oh-ih)/2,fps={fps},format=yuv420p[v_scaled];" +
                $"[l_src]pan=mono|c0=c0,showvolume=r={fps}:w=80:h={PreviewTotalHeight}:f=0.92:b=1:t=0:v=1:dm=1:o=v:ds=log:p=0.18:m=r,scale={PreviewMeterWidth}:{PreviewTotalHeight},format=yuv420p[left_bar];" +
@@ -242,7 +353,7 @@ public sealed class FfmpegStreamRunner : IDisposable
 
         // Video stream scaling & optional deinterlace
         string videoProcess = "";
-        if (config.Deinterlace)
+        if (config.Deinterlace && !IsFileSource(config.DeckLinkDevice))
         {
             videoProcess += "yadif=0:-1:0,";
         }
