@@ -65,9 +65,17 @@ public sealed class FfmpegStreamRunner : IDisposable
         if (File.Exists(localExe))
             return localExe;
 
-        var projDirExe = @"d:\_projects\streaming\ffmpeg.exe";
-        if (File.Exists(projDirExe))
-            return projDirExe;
+        var toolsExe = @"d:\_projects\streaming\tools\ffmpeg.exe";
+        if (File.Exists(toolsExe))
+            return toolsExe;
+
+        var recorderExe = @"D:\_projects\FfmpegRecorder\bin\Debug\net10.0-windows\ffmpeg.exe";
+        if (File.Exists(recorderExe))
+            return recorderExe;
+
+        var srtExe = @"D:\_projects\SrtSuite\bin\Release\net10.0-windows\win-x64\ffmpeg.exe";
+        if (File.Exists(srtExe))
+            return srtExe;
 
         return "ffmpeg.exe";
     }
