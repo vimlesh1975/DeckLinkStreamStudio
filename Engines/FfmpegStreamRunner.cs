@@ -119,7 +119,7 @@ public sealed class FfmpegStreamRunner : IDisposable
         AppendDeckLinkInput(sb, config);
 
         // Preview Filter: 16:9 scaled video + left/right audio VU meters
-        var filter = BuildPreviewFilterGraph(config.PreviewFps > 0 ? config.PreviewFps : 15);
+        var filter = BuildPreviewFilterGraph(config, config.PreviewFps > 0 ? config.PreviewFps : 15);
         sb.Append($"-filter_complex \"{filter}\" ");
 
         // Map preview to stdout pipe as raw bgr24 video
@@ -184,25 +184,6 @@ public sealed class FfmpegStreamRunner : IDisposable
             sb.Append($"-map \"[v_stream]\" -map \"[a_stream]\" {videoCodecArgs} {audioCodecArgs} -max_muxing_queue_size 4096 -f tee \"{teeChain}\" ");
         }
 
-        // Optional Simultaneous Local Archive Recording
-        if (config.EnableLocalArchive && !string.IsNullOrWhiteSpace(config.ArchiveDirectory))
-        {
-            try
-            {
-                if (!Directory.Exists(config.ArchiveDirectory))
-                {
-                    Directory.CreateDirectory(config.ArchiveDirectory);
-                }
-            }
-            catch { }
-
-            var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-            var ext = string.IsNullOrWhiteSpace(config.ArchiveFormat) ? ".mp4" : config.ArchiveFormat;
-            var archivePath = Path.Combine(config.ArchiveDirectory, $"Sahyadri_Broadcast_{timestamp}{ext}");
-
-            sb.Append($"-map \"[v_stream]\" -map \"[a_stream]\" {videoCodecArgs} {audioCodecArgs} -max_muxing_queue_size 4096 \"{archivePath}\" ");
-        }
-
         // Output preview to pipe:1 for in-app operator monitor
         sb.Append("-map \"[tx_preview]\" -f rawvideo -pix_fmt bgr24 pipe:1");
 
@@ -232,10 +213,11 @@ public sealed class FfmpegStreamRunner : IDisposable
         sb.Append($"-i \"{config.DeckLinkDevice}\" ");
     }
 
-    private string BuildPreviewFilterGraph(int fps)
+    private string BuildPreviewFilterGraph(StreamConfig config, int fps)
     {
+        string deint = config.Deinterlace ? "yadif=0:-1:0," : "";
         return "[0:a]aresample=48000,aformat=sample_fmts=s16:channel_layouts=stereo,asplit=2[l_src][r_src];" +
-               $"[0:v]scale={PreviewCenterWidth}:{PreviewTotalHeight}:force_original_aspect_ratio=decrease,pad={PreviewCenterWidth}:{PreviewTotalHeight}:(ow-iw)/2:(oh-ih)/2,fps={fps},format=yuv420p[v_scaled];" +
+               $"[0:v]{deint}scale={PreviewCenterWidth}:{PreviewTotalHeight}:force_original_aspect_ratio=decrease,pad={PreviewCenterWidth}:{PreviewTotalHeight}:(ow-iw)/2:(oh-ih)/2,fps={fps},format=yuv420p[v_scaled];" +
                $"[l_src]pan=mono|c0=c0,showvolume=r={fps}:w=80:h={PreviewTotalHeight}:f=0.92:b=1:t=0:v=1:dm=1:o=v:ds=log:p=0.18:m=r,scale={PreviewMeterWidth}:{PreviewTotalHeight},format=yuv420p[left_bar];" +
                $"[r_src]pan=mono|c0=c1,showvolume=r={fps}:w=80:h={PreviewTotalHeight}:f=0.92:b=1:t=0:v=1:dm=1:o=v:ds=log:p=0.18:m=r,scale={PreviewMeterWidth}:{PreviewTotalHeight},format=yuv420p[right_bar];" +
                "[left_bar][v_scaled][right_bar]hstack=inputs=3,format=bgr24[tx_preview]";

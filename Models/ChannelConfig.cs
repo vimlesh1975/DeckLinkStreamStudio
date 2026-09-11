@@ -55,15 +55,10 @@ public sealed class StreamConfig
     public int AudioBitrateKbps { get; set; } = 192;
     public int AudioSampleRate { get; set; } = 48000;
 
-    // Simultaneous Local Archive Recording
-    public bool EnableLocalArchive { get; set; } = false;
-    public string ArchiveDirectory { get; set; } = @"D:\StreamRecordings";
-    public string ArchiveFormat { get; set; } = ".mp4"; // .mp4, .mov, .mkv, .ts
-
     // In-App Video Preview Dimensions
-    public int PreviewCenterWidth { get; set; } = 800;
-    public int PreviewTotalHeight { get; set; } = 450;
-    public int PreviewMeterWidth { get; set; } = 24;
+    public int PreviewCenterWidth { get; set; } = 444;
+    public int PreviewTotalHeight { get; set; } = 250;
+    public int PreviewMeterWidth { get; set; } = 18;
     public int PreviewFps { get; set; } = 15;
 }
 

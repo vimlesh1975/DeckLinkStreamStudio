@@ -15,7 +15,6 @@ public sealed class AppSettings
     };
 
     public bool DarkMode { get; set; } = true;
-    public string DefaultRecordingDirectory { get; set; } = @"D:\StreamRecordings";
     public bool AutoReconnect { get; set; } = true;
 
     public StreamConfig StreamSettings { get; set; } = new();
@@ -92,8 +91,6 @@ public sealed class AppSettings
                 KeyframeIntervalSeconds = 2,
                 OutputResolution = "Original",
                 AudioBitrateKbps = 192,
-                EnableLocalArchive = false,
-                ArchiveDirectory = @"D:\StreamRecordings",
                 Destinations = new List<DestinationConfig>
                 {
                     new() { Id = "fb", Name = "Sahyadri Facebook", Enabled = true, ServerUrl = "rtmps://live-api-s.facebook.com:443/rtmp/", StreamKey = "" },

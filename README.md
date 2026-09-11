@@ -40,7 +40,6 @@ High-performance broadcast streaming desktop application for Windows x64. Ingest
   - **NVIDIA NVENC (`h264_nvenc`)**: Zero-latency GPU encoding (`-preset ll -tune ll -zerolatency 1`, 2-second GOP).
   - CPU software fallback (`libx264`).
   - Configurable bitrate (1500 to 30000 kbps).
-  - Optional simultaneous local `.mp4` archive recording.
 
 - **Persistent Settings (Outside Project Folder)**:
   - Settings are stored strictly in `%APPDATA%\DeckLinkStreamStudio\settings.json`.
