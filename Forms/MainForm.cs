@@ -106,6 +106,10 @@ public sealed class MainForm : Form
     // CPU Timer
     private readonly System.Windows.Forms.Timer _cpuTimer = new() { Interval = 1000 };
 
+    // Destination Cooldown Timer (e.g. 10s cooldown on Facebook to allow clean session teardown)
+    private readonly int[] _destCooldown = new int[3];
+    private readonly System.Windows.Forms.Timer _destCooldownTimer = new() { Interval = 1000 };
+
     [StructLayout(LayoutKind.Sequential)]
     private struct FILETIME
     {
@@ -163,8 +167,10 @@ public sealed class MainForm : Form
                         if (IsDisposed) return;
                         if (runner.DestinationIndex < _config.Destinations.Count)
                         {
-                            _config.Destinations[runner.DestinationIndex].Enabled = false;
+                            var d = _config.Destinations[runner.DestinationIndex];
+                            d.Enabled = false;
                             _settings.Save();
+                            StartCooldown(runner.DestinationIndex, d.Name.Contains("Facebook", StringComparison.OrdinalIgnoreCase) ? 70 : 3);
                         }
                         UpdateDestinationButtons();
                         UpdateOverallStreamStatus();
@@ -198,6 +204,8 @@ public sealed class MainForm : Form
         _cpuTimer.Tick += (s, e) => UpdateCpuUsage();
         _cpuTimer.Start();
         UpdateCpuUsage();
+
+        _destCooldownTimer.Tick += (s, e) => OnDestCooldownTick();
 
         Shown += (s, e) =>
         {
@@ -709,7 +717,7 @@ public sealed class MainForm : Form
         txtUrl.Cursor = Cursors.Arrow;
         txtUrl.Location = new Point(72, 27);
         // Width: from x=72 to just before STREAM button (right-anchored), leaving 12px gap
-        txtUrl.Width = Math.Max(80, pnl.ClientSize.Width - 72 - 84 - 12 - 14);
+        txtUrl.Width = Math.Max(80, pnl.ClientSize.Width - 72 - 90 - 12 - 14);
         txtUrl.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
         txtUrl.Text = _config.Destinations[destIndex].ServerUrl;
         txtUrl.Select(0, 0);
@@ -743,10 +751,10 @@ public sealed class MainForm : Form
         btnStream.ForeColor = Color.White;
         btnStream.FlatStyle = FlatStyle.Flat;
         btnStream.FlatAppearance.BorderSize = 0;
-        btnStream.Width = 84;
+        btnStream.Width = 90;
         btnStream.Height = 25;
         btnStream.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-        btnStream.Location = new Point(pnl.ClientSize.Width - 14 - 84, 26);
+        btnStream.Location = new Point(pnl.ClientSize.Width - 14 - 90, 26);
         btnStream.Click += (s, e) => ToggleDestinationStream(destIndex);
         pnl.Controls.Add(btnStream);
 
@@ -1204,6 +1212,7 @@ public sealed class MainForm : Form
     {
         if (_destRunners == null || destIndex < 0 || destIndex >= _destRunners.Length) return;
         if (destIndex >= _config.Destinations.Count) return;
+        if (_destCooldown[destIndex] > 0) return;
 
         var dest = _config.Destinations[destIndex];
         var runner = _destRunners[destIndex];
@@ -1233,6 +1242,7 @@ public sealed class MainForm : Form
                 await Task.Run(() => runner.Stop());
                 dest.Enabled = false;
                 _settings.Save();
+                StartCooldown(destIndex, dest.Name.Contains("Facebook", StringComparison.OrdinalIgnoreCase) ? 70 : 3);
             }
             else
             {
@@ -1256,7 +1266,7 @@ public sealed class MainForm : Form
         {
             if (btn != null)
             {
-                btn.Enabled = true;
+                btn.Enabled = _destCooldown[destIndex] <= 0;
             }
             _streamActionLock.Release();
             UpdateDestinationButtons();
@@ -1272,6 +1282,46 @@ public sealed class MainForm : Form
         _ => null
     };
 
+    private void StartCooldown(int destIndex, int seconds)
+    {
+        if (destIndex < 0 || destIndex >= _destCooldown.Length) return;
+        if (seconds <= 0) return;
+        _destCooldown[destIndex] = seconds;
+        _destCooldownTimer.Start();
+        var btn = GetDestButton(destIndex);
+        if (btn != null)
+        {
+            UpdateDestBtn(btn, destIndex);
+        }
+    }
+
+    private void OnDestCooldownTick()
+    {
+        if (IsDisposed) return;
+        bool anyActive = false;
+        for (int i = 0; i < _destCooldown.Length; i++)
+        {
+            if (_destCooldown[i] > 0)
+            {
+                _destCooldown[i]--;
+                var btn = GetDestButton(i);
+                if (btn != null)
+                {
+                    UpdateDestBtn(btn, i);
+                }
+                if (_destCooldown[i] > 0)
+                {
+                    anyActive = true;
+                }
+            }
+        }
+
+        if (!anyActive)
+        {
+            _destCooldownTimer.Stop();
+        }
+    }
+
     private void UpdateDestinationButtons()
     {
         UpdateDestBtn(_btnStreamFb, 0);
@@ -1284,7 +1334,16 @@ public sealed class MainForm : Form
         if (index >= _config.Destinations.Count) return;
         if (_destRunners == null || index >= _destRunners.Length) return;
 
+        if (_destCooldown[index] > 0)
+        {
+            btn.Text = $"⏳ WAIT {_destCooldown[index]}s";
+            btn.BackColor = Color.FromArgb(100, 116, 139);
+            btn.Enabled = false;
+            return;
+        }
+
         bool isActive = _destRunners[index].IsRunning;
+        btn.Enabled = true;
 
         if (isActive)
         {
@@ -1541,6 +1600,8 @@ public sealed class MainForm : Form
         base.OnFormClosing(e);
 
         _cpuTimer.Stop();
+        _destCooldownTimer.Stop();
+        _destCooldownTimer.Dispose();
         if (_destRunners != null)
         {
             for (int i = 0; i < _destRunners.Length; i++)
