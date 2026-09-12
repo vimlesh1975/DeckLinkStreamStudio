@@ -79,35 +79,10 @@ public sealed class DestinationStreamRunner : IDisposable
         var sb = new StringBuilder();
         sb.Append("-hide_banner -loglevel info -stats ");
 
-        // Ingest source
-        if (FfmpegStreamRunner.IsFileSource(config.DeckLinkDevice))
-        {
-            var filePath = FfmpegStreamRunner.ResolveMediaFilePath(config.DeckLinkDevice);
-            sb.Append($"-stream_loop -1 -re -i \"{filePath}\" ");
-        }
-        else
-        {
-            sb.Append("-f decklink ");
-            if (!string.IsNullOrWhiteSpace(config.VideoStandardCode) && !string.Equals(config.VideoStandardCode, "auto", StringComparison.OrdinalIgnoreCase))
-            {
-                sb.Append($"-format_code {config.VideoStandardCode} ");
-            }
-            sb.Append("-video_input sdi ");
-            var audioInput = string.IsNullOrWhiteSpace(config.AudioInput) ? "embedded" : config.AudioInput;
-            sb.Append($"-audio_input \"{audioInput}\" -signal_loss_action bars -audio_depth 16 -channels 2 ");
-            sb.Append($"-i \"{config.DeckLinkDevice}\" ");
-        }
+        int clientPort = TcpBroadcastHub.BaseClientPort + DestinationIndex;
+        sb.Append($"-i tcp://127.0.0.1:{clientPort} ");
 
-        // Filter: deinterlace if needed and ensure standard pixel/sample formats
-        string deint = (config.Deinterlace && !FfmpegStreamRunner.IsFileSource(config.DeckLinkDevice)) ? "yadif=0:-1:0," : "";
-        sb.Append($"-filter_complex \"[0:v]{deint}format=yuv420p[v_out];[0:a]aresample=48000[a_out]\" -map \"[v_out]\" -map \"[a_out]\" ");
-
-        // Encoding settings
-        var gopSize = Math.Max(25, (config.TargetFps > 0 ? config.TargetFps : 25) * config.KeyframeIntervalSeconds);
-        var videoCodecArgs = FfmpegStreamRunner.GetVideoCodecArgs(config.VideoEncoder, config.VideoBitrateKbps, gopSize);
-        var audioCodecArgs = $"-c:a aac -b:a {config.AudioBitrateKbps}k -ar 48000 -ac 2";
-
-        sb.Append($"{videoCodecArgs} {audioCodecArgs} -max_muxing_queue_size 4096 -f flv \"{dest.FullUrl}\"");
+        sb.Append($"-c copy -max_muxing_queue_size 4096 -f flv \"{dest.FullUrl}\"");
         return sb.ToString();
     }
 
@@ -136,11 +111,11 @@ public sealed class DestinationStreamRunner : IDisposable
             proc.ErrorDataReceived += OnProcessErrorData;
             proc.Exited += OnProcessExitedHandler;
 
-            OnLog?.Invoke($"[{DestinationName} START] {_ffmpegPath} {arguments}");
+            OnLog?.Invoke($"[STARTED] Destination: {DestinationName}");
 
             if (!proc.Start())
             {
-                OnLog?.Invoke($"[{DestinationName} ERROR] Failed to start FFmpeg process.");
+                OnLog?.Invoke($"[ERROR] [{DestinationName}] Failed to start FFmpeg process.");
                 return false;
             }
 
@@ -155,7 +130,7 @@ public sealed class DestinationStreamRunner : IDisposable
         }
         catch (Exception ex)
         {
-            OnLog?.Invoke($"[{DestinationName} EXCEPTION] {ex.Message}");
+            OnLog?.Invoke($"[ERROR] [{DestinationName}] {ex.Message}");
             return false;
         }
     }
@@ -164,7 +139,11 @@ public sealed class DestinationStreamRunner : IDisposable
     {
         if (string.IsNullOrWhiteSpace(e.Data)) return;
 
-        OnLog?.Invoke($"[{DestinationName}] {e.Data}");
+        if (FfmpegStreamRunner.IsFfmpegError(e.Data))
+        {
+            OnLog?.Invoke($"[ERROR] [{DestinationName}] {e.Data.Trim()}");
+        }
+
         ParseProgressStats(e.Data);
     }
 
@@ -236,7 +215,15 @@ public sealed class DestinationStreamRunner : IDisposable
         CurrentStats.CurrentBitrateKbps = 0;
         CurrentStats.CurrentFps = 0;
 
-        OnLog?.Invoke($"[{DestinationName} EXITED] Exit code: {exitCode}");
+        if (exitCode != 0 && exitCode != 255)
+        {
+            OnLog?.Invoke($"[ERROR] [{DestinationName}] Process exited with code {exitCode}");
+        }
+        else
+        {
+            OnLog?.Invoke($"[STOPPED] Destination: {DestinationName}");
+        }
+
         OnProcessExited?.Invoke(this, exitCode);
     }
 
@@ -246,6 +233,8 @@ public sealed class DestinationStreamRunner : IDisposable
         {
             if (_process == null) return;
 
+            OnLog?.Invoke($"[STOPPED] Destination: {DestinationName}");
+
             try
             {
                 if (!_process.HasExited)
@@ -254,10 +243,11 @@ public sealed class DestinationStreamRunner : IDisposable
                     {
                         _process.StandardInput.WriteLine("q");
                         _process.StandardInput.Flush();
+                        _process.StandardInput.Close();
                     }
                     catch { }
 
-                    if (!_process.WaitForExit(800))
+                    if (!_process.WaitForExit(1500))
                     {
                         _process.Kill(true);
                     }

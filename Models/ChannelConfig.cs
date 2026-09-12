@@ -7,7 +7,7 @@ public sealed class DestinationConfig
 {
     public string Id { get; set; } = "";
     public string Name { get; set; } = "";
-    public bool Enabled { get; set; } = true;
+    public bool Enabled { get; set; } = false;
     public string ServerUrl { get; set; } = "";
     public string StreamKey { get; set; } = "";
     public StreamingProtocol Protocol { get; set; } = StreamingProtocol.RTMP;
@@ -41,16 +41,16 @@ public sealed class StreamConfig
     // 3 Streaming Destinations: Sahyadri Facebook, Sahyadri YouTube, Sahyadri YouTube News
     public List<DestinationConfig> Destinations { get; set; } = new()
     {
-        new() { Id = "fb", Name = "Sahyadri Facebook", Enabled = true, ServerUrl = "rtmps://live-api-s.facebook.com:443/rtmp/", StreamKey = "" },
-        new() { Id = "yt_main", Name = "Sahyadri YouTube", Enabled = true, ServerUrl = "rtmp://a.rtmp.youtube.com/live2", StreamKey = "" },
-        new() { Id = "yt_news", Name = "Sahyadri YouTube News", Enabled = true, ServerUrl = "rtmp://a.rtmp.youtube.com/live2", StreamKey = "" }
+        new() { Id = "fb", Name = "Sahyadri Facebook", Enabled = false, ServerUrl = "rtmps://live-api-s.facebook.com:443/rtmp/", StreamKey = "" },
+        new() { Id = "yt_main", Name = "Sahyadri YouTube", Enabled = false, ServerUrl = "rtmp://a.rtmp.youtube.com/live2", StreamKey = "" },
+        new() { Id = "yt_news", Name = "Sahyadri YouTube News", Enabled = false, ServerUrl = "rtmp://a.rtmp.youtube.com/live2", StreamKey = "" }
     };
 
     // Video Encoding
-    public VideoEncoderType VideoEncoder { get; set; } = VideoEncoderType.Auto;
-    public int VideoBitrateKbps { get; set; } = 6500;
+    public VideoEncoderType VideoEncoder { get; set; } = VideoEncoderType.LibX264;
+    public int VideoBitrateKbps { get; set; } = 5000;
     public int KeyframeIntervalSeconds { get; set; } = 2;
-    public string OutputResolution { get; set; } = "Original"; // Original, 1920x1080, 1280x720, 854x480
+    public string OutputResolution { get; set; } = "1920x1080"; // 1920x1080, 1280x720, Original
     public int TargetFps { get; set; } = 0; // 0 = source fps, 25, 30, 50, 60
 
     // Audio Encoding

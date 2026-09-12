@@ -44,10 +44,9 @@ public sealed class AppSettings
                 var settings = JsonSerializer.Deserialize<AppSettings>(json, JsonOptions);
                 if (settings != null && settings.StreamSettings != null)
                 {
-                    if (string.IsNullOrWhiteSpace(settings.StreamSettings.DeckLinkDevice) ||
-                        settings.StreamSettings.DeckLinkDevice.Equals("DeckLink SDI 4K", StringComparison.OrdinalIgnoreCase))
+                    if (string.IsNullOrWhiteSpace(settings.StreamSettings.DeckLinkDevice))
                     {
-                        settings.StreamSettings.DeckLinkDevice = "go1080p25.mp4";
+                        settings.StreamSettings.DeckLinkDevice = "DeckLink Duo (1)";
                     }
                     EnsureDefaultDestinations(settings.StreamSettings);
                     return settings;
@@ -92,9 +91,9 @@ public sealed class AppSettings
                 DeckLinkDevice = "go1080p25.mp4",
                 VideoStandardCode = "Hp25",
                 VideoEncoder = VideoEncoderType.LibX264,
-                VideoBitrateKbps = 6500,
+                VideoBitrateKbps = 5000,
                 KeyframeIntervalSeconds = 2,
-                OutputResolution = "Original",
+                OutputResolution = "1920x1080",
                 AudioBitrateKbps = 192,
                 Destinations = new List<DestinationConfig>
                 {

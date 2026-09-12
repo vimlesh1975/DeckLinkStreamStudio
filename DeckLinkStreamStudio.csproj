@@ -9,6 +9,7 @@
     <RootNamespace>DeckLinkStreamStudio</RootNamespace>
     <StartupObject>DeckLinkStreamStudio.Program</StartupObject>
     <UseWindowsForms>true</UseWindowsForms>
+    <UseWPF>true</UseWPF>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -46,5 +47,9 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
+
+  <Target Name="KillRunningAppBeforeBuild" BeforeTargets="BeforeBuild;BeforeRebuild">
+    <Exec Command="taskkill /F /IM DeckLinkStreamStudio.exe /T 2&gt;nul || exit 0" ContinueOnError="true" />
+  </Target>
 
 </Project>

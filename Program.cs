@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Threading;
 using System.Windows.Forms;
 using DeckLinkStreamStudio.Forms;
 
@@ -9,26 +10,63 @@ namespace DeckLinkStreamStudio;
 
 internal static class Program
 {
+    private static Mutex? _singleInstanceMutex;
+
     [STAThread]
     private static void Main()
     {
-        // Cleanup any stale helper processes from previous abnormal terminations
-        StopBundledHelperProcesses();
+        bool isOnlyInstance = false;
+        try
+        {
+            const string mutexName = "DeckLinkStreamStudio_SingleInstance_Mutex_v3";
+            _singleInstanceMutex = new Mutex(true, mutexName, out isOnlyInstance);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Mutex Error: {ex.Message}");
+            return;
+        }
 
-        AppDomain.CurrentDomain.ProcessExit += (s, e) => StopBundledHelperProcesses();
-        Application.ApplicationExit += (s, e) => StopBundledHelperProcesses();
-
-        Application.SetHighDpiMode(HighDpiMode.SystemAware);
-        Application.EnableVisualStyles();
-        Application.SetCompatibleTextRenderingDefault(false);
+        if (!isOnlyInstance)
+        {
+            MessageBox.Show("Another instance is already running.");
+            return;
+        }
 
         try
         {
-            Application.Run(new MainForm());
+            // Cleanup any stale helper processes from previous abnormal terminations
+            StopBundledHelperProcesses();
+
+            AppDomain.CurrentDomain.ProcessExit += (s, e) => StopBundledHelperProcesses();
+            Application.ApplicationExit += (s, e) => StopBundledHelperProcesses();
+
+            Application.SetHighDpiMode(HighDpiMode.SystemAware);
+            Application.EnableVisualStyles();
+            Application.SetCompatibleTextRenderingDefault(false);
+
+            try
+            {
+                Application.Run(new MainForm());
+            }
+            catch (Exception ex)
+            {
+                File.WriteAllText("crash.log", ex.ToString());
+                MessageBox.Show($"UI Crash: {ex.Message}");
+            }
+            finally
+            {
+                StopBundledHelperProcesses();
+            }
         }
         finally
         {
-            StopBundledHelperProcesses();
+            try
+            {
+                _singleInstanceMutex.ReleaseMutex();
+            }
+            catch { }
+            _singleInstanceMutex.Dispose();
         }
     }
 

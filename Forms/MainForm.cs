@@ -26,7 +26,6 @@ public sealed class MainForm : Form
     private readonly ComboBox _deviceComboBox = new();
     private readonly Label _lblFormat = new();
     private readonly ComboBox _formatComboBox = new();
-    private readonly Label _statusBadge = new();
     private readonly Label _cpuBadge = new();
     private readonly Button _btnPreview = new();
     private readonly Button _btnListen = new();
@@ -63,6 +62,8 @@ public sealed class MainForm : Form
     // Destinations Section (Directly below encoder, no middle gap)
     private readonly Panel _rightPanel = new();
     private readonly Label _lblDestTitle = new();
+    private int _isRenderingFrame = 0;
+    private readonly SemaphoreSlim _streamActionLock = new(1, 1);
 
     // Destination 1: Sahyadri Facebook
     private readonly Panel _pnlFb = new();
@@ -100,6 +101,7 @@ public sealed class MainForm : Form
     private readonly Label _lblLogTitle = new();
     private readonly Button _btnClearLog = new();
     private readonly TextBox _logTextBox = new();
+    private int _baseFormHeight = 800;
 
     // CPU Timer
     private readonly System.Windows.Forms.Timer _cpuTimer = new() { Interval = 1000 };
@@ -126,6 +128,16 @@ public sealed class MainForm : Form
         _devices = DeckLinkEnumerator.GetInstalledDevices();
         _runner = new FfmpegStreamRunner();
 
+        // Write session-start marker to log file
+        try
+        {
+            File.AppendAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "streaming.log"),
+                $"\r\n{'='.ToString().PadRight(80, '=')}\r\n" +
+                $"SESSION START: {DateTime.Now:yyyy-MM-dd HH:mm:ss}  Device: {_config.DeckLinkDevice}  Format: {_config.VideoStandardCode}\r\n" +
+                $"{'='.ToString().PadRight(80, '=')}\r\n");
+        }
+        catch { }
+
         _destRunners = new DestinationStreamRunner[3]
         {
             new DestinationStreamRunner(0, "Sahyadri Facebook"),
@@ -149,6 +161,11 @@ public sealed class MainForm : Form
                     BeginInvoke(new Action(() =>
                     {
                         if (IsDisposed) return;
+                        if (runner.DestinationIndex < _config.Destinations.Count)
+                        {
+                            _config.Destinations[runner.DestinationIndex].Enabled = false;
+                            _settings.Save();
+                        }
                         UpdateDestinationButtons();
                         UpdateOverallStreamStatus();
                     }));
@@ -164,6 +181,13 @@ public sealed class MainForm : Form
         InitializeLogConsole();
         HookRunnerEvents();
         LoadConfigIntoUi();
+
+        // Ensure all broadcast destinations start disabled on application launch
+        foreach (var d in _config.Destinations)
+        {
+            d.Enabled = false;
+        }
+        UpdateDestinationButtons();
 
         // Ensure proper WinForms docking order: _leftPanel (DockStyle.Fill) must be at front
         // so _topHeader (DockStyle.Top) does not overlap or cut off the top of the video preview.
@@ -195,6 +219,7 @@ public sealed class MainForm : Form
         StartPosition = FormStartPosition.CenterScreen;
         Font = new Font("Segoe UI", 9f);
         Icon = SystemIcons.Application;
+        _baseFormHeight = Height;
     }
 
     private void InitializeTopHeader()
@@ -219,6 +244,7 @@ public sealed class MainForm : Form
         _deviceComboBox.FlatStyle = FlatStyle.Flat;
         _deviceComboBox.Font = new Font("Segoe UI", 8.5f);
         _deviceComboBox.Width = 120;
+        _deviceComboBox.DropDownWidth = 180;
         _deviceComboBox.Location = new Point(108, 8);
 
         foreach (var d in _devices) _deviceComboBox.Items.Add(d.Name);
@@ -249,8 +275,13 @@ public sealed class MainForm : Form
 
                 if (_runner.IsRunning && GetActiveStreamCount() == 0)
                 {
-                    _runner.Stop();
-                    _runner.StartStandbyPreview(_config);
+                    RestartStandbyPreviewAsync();
+                }
+
+                if (_audioMonitor.IsMonitoring)
+                {
+                    _audioMonitor.Start(_config.DeckLinkDevice, _config.VideoStandardCode);
+                    AppendLog($"[STARTED] Audio Monitoring ({_config.DeckLinkDevice})");
                 }
             }
         };
@@ -286,22 +317,13 @@ public sealed class MainForm : Form
                 _settings.Save();
                 if (_runner.IsRunning && GetActiveStreamCount() == 0)
                 {
-                    _runner.Stop();
-                    _runner.StartStandbyPreview(_config);
+                    RestartStandbyPreviewAsync();
                 }
             }
         };
 
         bool isFileInitial = FfmpegStreamRunner.IsFileSource(_config.DeckLinkDevice);
         _formatComboBox.Enabled = !isFileInitial;
-
-        // Status Badge
-        _statusBadge.Text = "OFFLINE";
-        _statusBadge.Font = new Font("Segoe UI", 8f, FontStyle.Bold);
-        _statusBadge.Padding = new Padding(5, 3, 5, 3);
-        _statusBadge.AutoSize = true;
-        _statusBadge.Location = new Point(440, 9);
-        _statusBadge.SizeChanged += (s, e) => UpdateHeaderBadgePositions();
 
         // CPU Usage Badge (Big, prominent font)
         _cpuBadge.Text = "CPU: 0%";
@@ -343,7 +365,7 @@ public sealed class MainForm : Form
         _chkShowLogs.Checked = false;
         _chkShowLogs.CheckedChanged += (s, e) =>
         {
-            _logPanel.Visible = _chkShowLogs.Checked;
+            ToggleLogConsoleVisibility(_chkShowLogs.Checked);
         };
 
         // Dark mode checkbox
@@ -364,7 +386,6 @@ public sealed class MainForm : Form
         _topHeader.Controls.Add(_deviceComboBox);
         _topHeader.Controls.Add(_lblFormat);
         _topHeader.Controls.Add(_formatComboBox);
-        _topHeader.Controls.Add(_statusBadge);
         _topHeader.Controls.Add(_cpuBadge);
         _topHeader.Controls.Add(_btnPreview);
         _topHeader.Controls.Add(_btnListen);
@@ -379,8 +400,7 @@ public sealed class MainForm : Form
 
     private void UpdateHeaderBadgePositions()
     {
-        // Maintain a clean 14px gap between the status badge and the large CPU badge
-        _cpuBadge.Location = new Point(_statusBadge.Right + 14, 5);
+        _cpuBadge.Location = new Point(_formatComboBox.Right + 16, 5);
     }
 
     private void LayoutTopHeaderRightControls()
@@ -529,7 +549,7 @@ public sealed class MainForm : Form
         _hwSettingsPanel.Padding = new Padding(6, 2, 6, 2);
         _hwSettingsPanel.Margin = new Padding(0, 2, 0, 0);
 
-        _lblHwTitle.Text = "ENCODER:";
+        _lblHwTitle.Text = "YT ENCODER:";
         _lblHwTitle.Font = new Font("Segoe UI", 8f, FontStyle.Bold);
         _lblHwTitle.AutoSize = true;
         _lblHwTitle.Location = new Point(8, 10);
@@ -538,28 +558,37 @@ public sealed class MainForm : Form
         _encoderCombo.DropDownStyle = ComboBoxStyle.DropDownList;
         _encoderCombo.FlatStyle = FlatStyle.Flat;
         _encoderCombo.Font = new Font("Segoe UI", 8.5f);
-        _encoderCombo.Width = 135;
-        _encoderCombo.Location = new Point(78, 6);
-        _encoderCombo.Items.Add("Auto (GPU/CPU)");
+        _encoderCombo.Width = 155;
+        _encoderCombo.Location = new Point(94, 6);
+        _encoderCombo.Items.Add("NVIDIA HEVC (H.265)");
+        _encoderCombo.Items.Add("NVIDIA H.264 (NVENC)");
         _encoderCombo.Items.Add("AMD GPU (AMF)");
-        _encoderCombo.Items.Add("NVIDIA (NVENC)");
         _encoderCombo.Items.Add("CPU (libx264)");
-        _encoderCombo.SelectedIndex = 0;
+        _encoderCombo.Items.Add("Auto (GPU/CPU)");
+        _encoderCombo.SelectedIndex = _config.VideoEncoder switch
+        {
+            VideoEncoderType.HEVC_NVENC => 0,
+            VideoEncoderType.H264_NVENC => 1,
+            VideoEncoderType.H264_AMF => 2,
+            VideoEncoderType.LibX264 => 3,
+            VideoEncoderType.Auto => 4,
+            _ => 3
+        };
         _encoderCombo.SelectedIndexChanged += (s, e) =>
         {
             _config.VideoEncoder = _encoderCombo.SelectedIndex switch
             {
-                0 => VideoEncoderType.Auto,
-                1 => VideoEncoderType.H264_AMF,
-                2 => VideoEncoderType.H264_NVENC,
+                0 => VideoEncoderType.HEVC_NVENC,
+                1 => VideoEncoderType.H264_NVENC,
+                2 => VideoEncoderType.H264_AMF,
                 3 => VideoEncoderType.LibX264,
-                _ => VideoEncoderType.Auto
+                4 => VideoEncoderType.Auto,
+                _ => VideoEncoderType.HEVC_NVENC
             };
             _settings.Save();
             if (_runner.IsRunning && GetActiveStreamCount() == 0)
             {
-                _runner.Stop();
-                _runner.StartStandbyPreview(_config);
+                RestartStandbyPreviewAsync();
             }
         };
         _hwSettingsPanel.Controls.Add(_encoderCombo);
@@ -567,7 +596,7 @@ public sealed class MainForm : Form
         _lblEncoderTitle.Text = "Bitrate:";
         _lblEncoderTitle.Font = new Font("Segoe UI", 8f);
         _lblEncoderTitle.AutoSize = true;
-        _lblEncoderTitle.Location = new Point(222, 10);
+        _lblEncoderTitle.Location = new Point(258, 10);
         _hwSettingsPanel.Controls.Add(_lblEncoderTitle);
 
         _bitrateUpDown.BorderStyle = BorderStyle.FixedSingle;
@@ -577,15 +606,14 @@ public sealed class MainForm : Form
         _bitrateUpDown.Increment = 500;
         _bitrateUpDown.Value = _config.VideoBitrateKbps;
         _bitrateUpDown.Width = 70;
-        _bitrateUpDown.Location = new Point(270, 7);
+        _bitrateUpDown.Location = new Point(306, 7);
         _bitrateUpDown.ValueChanged += (s, e) =>
         {
             _config.VideoBitrateKbps = (int)_bitrateUpDown.Value;
             _settings.Save();
             if (_runner.IsRunning && GetActiveStreamCount() == 0)
             {
-                _runner.Stop();
-                _runner.StartStandbyPreview(_config);
+                RestartStandbyPreviewAsync();
             }
         };
         _hwSettingsPanel.Controls.Add(_bitrateUpDown);
@@ -593,7 +621,7 @@ public sealed class MainForm : Form
         _lblKbps.Text = "kbps";
         _lblKbps.Font = new Font("Segoe UI", 8f);
         _lblKbps.AutoSize = true;
-        _lblKbps.Location = new Point(344, 10);
+        _lblKbps.Location = new Point(380, 10);
         _hwSettingsPanel.Controls.Add(_lblKbps);
     }
 
@@ -666,16 +694,22 @@ public sealed class MainForm : Form
         lblTitle.Location = new Point(14, 5);
         pnl.Controls.Add(lblTitle);
 
-        // URL Field - Clear visible label and wide input with start-aligned text
-        lblUrl.Text = "URL:";
+        // URL Field - locked by default, double-click to unlock for editing
+        lblUrl.Text = "🔒 URL:";
         lblUrl.Font = new Font("Segoe UI", 8.5f, FontStyle.Bold);
         lblUrl.AutoSize = true;
-        lblUrl.Location = new Point(14, 29);
+        lblUrl.Location = new Point(10, 29);
+        var urlToolTip = new ToolTip();
+        urlToolTip.SetToolTip(lblUrl, "Double-click URL field to unlock for editing");
+        urlToolTip.SetToolTip(txtUrl, "Double-click to unlock for editing");
 
         txtUrl.BorderStyle = BorderStyle.FixedSingle;
         txtUrl.Font = new Font("Segoe UI", 9f);
-        txtUrl.Location = new Point(54, 27);
-        txtUrl.Width = Math.Max(100, pnl.ClientSize.Width - 54 - 14 - 84 - 8);
+        txtUrl.ReadOnly = true;
+        txtUrl.Cursor = Cursors.Arrow;
+        txtUrl.Location = new Point(72, 27);
+        // Width: from x=72 to just before STREAM button (right-anchored), leaving 12px gap
+        txtUrl.Width = Math.Max(80, pnl.ClientSize.Width - 72 - 84 - 12 - 14);
         txtUrl.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
         txtUrl.Text = _config.Destinations[destIndex].ServerUrl;
         txtUrl.Select(0, 0);
@@ -683,6 +717,21 @@ public sealed class MainForm : Form
         {
             _config.Destinations[destIndex].ServerUrl = txtUrl.Text;
             _settings.Save();
+        };
+        txtUrl.DoubleClick += (s, e) =>
+        {
+            txtUrl.ReadOnly = false;
+            txtUrl.Cursor = Cursors.IBeam;
+            txtUrl.BackColor = _settings.DarkMode ? Color.FromArgb(55, 65, 85) : Color.FromArgb(255, 255, 240);
+            lblUrl.Text = "✏️ URL:";
+            txtUrl.SelectAll();
+        };
+        txtUrl.Leave += (s, e) =>
+        {
+            txtUrl.ReadOnly = true;
+            txtUrl.Cursor = Cursors.Arrow;
+            lblUrl.Text = "🔒 URL:";
+            txtUrl.BackColor = _settings.DarkMode ? Color.FromArgb(42, 50, 68) : Color.FromArgb(241, 245, 249);
         };
         pnl.Controls.Add(lblUrl);
         pnl.Controls.Add(txtUrl);
@@ -705,13 +754,14 @@ public sealed class MainForm : Form
         lblKey.Text = "Key:";
         lblKey.Font = new Font("Segoe UI", 8.5f, FontStyle.Bold);
         lblKey.AutoSize = true;
-        lblKey.Location = new Point(14, 57);
+        lblKey.Location = new Point(10, 57);
 
         txtKey.BorderStyle = BorderStyle.FixedSingle;
         txtKey.Font = new Font("Segoe UI", 9f);
         txtKey.UseSystemPasswordChar = true;
-        txtKey.Location = new Point(54, 55);
-        txtKey.Width = Math.Max(60, pnl.ClientSize.Width - 54 - 14 - 36 - 6);
+        txtKey.Location = new Point(52, 55);
+        // Width: from x=52 to just before eye button (right-anchored), leaving 12px gap
+        txtKey.Width = Math.Max(60, pnl.ClientSize.Width - 52 - 36 - 12 - 14);
         txtKey.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
         txtKey.Text = _config.Destinations[destIndex].StreamKey;
         txtKey.Select(0, 0);
@@ -777,7 +827,51 @@ public sealed class MainForm : Form
         _logPanel.Controls.Add(_logTextBox);
         _logPanel.Controls.Add(_logHeaderPanel);
 
+        _logHeaderPanel.Resize += (s, e) =>
+        {
+            if (_logHeaderPanel.ClientSize.Width > 0)
+            {
+                _btnClearLog.Location = new Point(_logHeaderPanel.ClientSize.Width - _btnClearLog.Width - 10, 3);
+            }
+        };
+
         Controls.Add(_logPanel);
+    }
+
+    private void ToggleLogConsoleVisibility(bool showLogs)
+    {
+        SuspendLayout();
+        int currentWidth = Width;
+        int logHeight = _logPanel.Height > 0 ? _logPanel.Height : 120;
+
+        if (showLogs)
+        {
+            int targetHeight = _baseFormHeight + logHeight;
+            MaximumSize = new Size(currentWidth, targetHeight);
+            MinimumSize = new Size(currentWidth, targetHeight);
+            Size = new Size(currentWidth, targetHeight);
+            _logPanel.Visible = true;
+
+            var workingArea = Screen.FromControl(this).WorkingArea;
+            if (Bottom > workingArea.Bottom)
+            {
+                Top = Math.Max(workingArea.Top, workingArea.Bottom - Height);
+            }
+        }
+        else
+        {
+            _logPanel.Visible = false;
+            MinimumSize = new Size(currentWidth, _baseFormHeight);
+            Size = new Size(currentWidth, _baseFormHeight);
+            MaximumSize = new Size(currentWidth, _baseFormHeight);
+
+            var workingArea = Screen.FromControl(this).WorkingArea;
+            if (Top < workingArea.Top)
+            {
+                Top = workingArea.Top;
+            }
+        }
+        ResumeLayout(true);
     }
 
     public void ApplyTheme(bool isDark)
@@ -857,9 +951,11 @@ public sealed class MainForm : Form
     {
         pnl.BackColor = bgCard;
         lblTitle.ForeColor = textMain;
-        lUrl.ForeColor = textMain;
-        tUrl.BackColor = bgControl;
-        tUrl.ForeColor = textMain;
+        lUrl.ForeColor = textSec; // dimmed to hint it's locked
+        // Only re-apply background if still read-only (don't override active-edit colour)
+        if (tUrl.ReadOnly)
+            tUrl.BackColor = bgControl;
+        tUrl.ForeColor = tUrl.ReadOnly ? textSec : textMain;
         lKey.ForeColor = textMain;
         tKey.BackColor = bgControl;
         tKey.ForeColor = textMain;
@@ -871,21 +967,44 @@ public sealed class MainForm : Form
     {
         _runner.OnPreviewFrame += frame =>
         {
-            if (IsDisposed) return;
+            if (IsDisposed)
+            {
+                frame.Dispose();
+                return;
+            }
+
+            // Drop frame if UI is still rendering previous frame - prevents UI queue lag & GDI memory leak
+            if (Interlocked.CompareExchange(ref _isRenderingFrame, 1, 0) != 0)
+            {
+                frame.Dispose();
+                return;
+            }
+
             try
             {
                 BeginInvoke(new Action(() =>
                 {
-                    if (IsDisposed) return;
-                    _standbyWatermark.Visible = false;
-                    var old = _previewBox.Image;
-                    _previewBox.Image = (Bitmap)frame.Clone();
-                    old?.Dispose();
+                    try
+                    {
+                        if (IsDisposed) return;
+                        _standbyWatermark.Visible = false;
+                        var old = _previewBox.Image;
+                        _previewBox.Image = frame;
+                        old?.Dispose();
 
-                    _fullscreenForm?.UpdateFrame(frame);
+                        _fullscreenForm?.UpdateFrame(frame);
+                    }
+                    finally
+                    {
+                        Interlocked.Exchange(ref _isRenderingFrame, 0);
+                    }
                 }));
             }
-            catch { }
+            catch
+            {
+                Interlocked.Exchange(ref _isRenderingFrame, 0);
+                frame.Dispose();
+            }
         };
 
         _runner.OnStatsUpdated += stats =>
@@ -921,7 +1040,7 @@ public sealed class MainForm : Form
 
         _runner.OnLog += msg => AppendLog(msg);
 
-        _runner.OnProcessExited += code =>
+        _runner.OnProcessExited += (code, mode) =>
         {
             if (IsDisposed) return;
             try
@@ -931,9 +1050,47 @@ public sealed class MainForm : Form
                     if (IsDisposed) return;
                     UpdateOverallStreamStatus();
                     _standbyWatermark.Visible = true;
-                    _standbyWatermark.Text = $"OFFLINE (Code {code})";
                     _previewBox.Image?.Dispose();
                     _previewBox.Image = null;
+
+                    if (mode == RunnerMode.LiveStream && !FfmpegStreamRunner.IsFileSource(_config.DeckLinkDevice))
+                    {
+                        // DeckLink live stream unexpectedly crashed/ended
+                        int activeCount = _config.Destinations.Count(d => d.Enabled && !string.IsNullOrWhiteSpace(d.FullUrl));
+                        if (_settings.AutoReconnect && activeCount > 0)
+                        {
+                            _standbyWatermark.Text = $"STREAM RECONNECTING (Code {code}) — Retrying in 2s...";
+                            _ = Task.Run(async () =>
+                            {
+                                await Task.Delay(2000);
+                                if (!IsDisposed && _runner != null && !_runner.IsRunning)
+                                {
+                                    int count = _config.Destinations.Count(d => d.Enabled && !string.IsNullOrWhiteSpace(d.FullUrl));
+                                    if (count > 0)
+                                    {
+                                        _runner.StartLiveStream(_config);
+                                    }
+                                }
+                            });
+                        }
+                        else
+                        {
+                            _standbyWatermark.Text = $"STREAM ENDED (Code {code}) — Returning to Preview";
+                            foreach (var d in _config.Destinations) d.Enabled = false;
+                            _settings.Save();
+                            UpdateDestinationButtons();
+                            _runner.StartStandbyPreview(_config);
+                            UpdateOverallStreamStatus();
+                        }
+                    }
+                    else if (mode == RunnerMode.StandbyPreview)
+                    {
+                        _standbyWatermark.Text = $"PREVIEW STOPPED (Code {code})";
+                    }
+                    else
+                    {
+                        _standbyWatermark.Text = $"OFFLINE (Code {code})";
+                    }
                 }));
             }
             catch { }
@@ -954,13 +1111,10 @@ public sealed class MainForm : Form
     private void UpdateOverallStreamStatus()
     {
         int activeCount = GetActiveStreamCount();
+        bool isOnAir = activeCount > 0;
 
-        if (activeCount > 0)
+        if (isOnAir)
         {
-            _statusBadge.Text = "🔴 ON AIR";
-            _statusBadge.BackColor = Color.FromArgb(239, 68, 68);
-            _statusBadge.ForeColor = Color.White;
-
             _btnPreview.Enabled = false;
             _deviceComboBox.Enabled = false;
             _formatComboBox.Enabled = false;
@@ -977,17 +1131,11 @@ public sealed class MainForm : Form
 
             if (_runner.IsRunning)
             {
-                _statusBadge.Text = "👁 STANDBY PREVIEW";
-                _statusBadge.BackColor = Color.FromArgb(245, 158, 11);
-                _statusBadge.ForeColor = Color.Black;
                 _btnPreview.Text = "⏹ STOP PREVIEW";
                 _btnPreview.BackColor = Color.FromArgb(217, 119, 6);
             }
             else
             {
-                _statusBadge.Text = "OFFLINE";
-                _statusBadge.BackColor = Color.FromArgb(47, 55, 70);
-                _statusBadge.ForeColor = Color.FromArgb(148, 163, 184);
                 _btnPreview.Text = "👁 PREVIEW";
                 _btnPreview.BackColor = Color.FromArgb(37, 99, 235);
             }
@@ -1052,7 +1200,7 @@ public sealed class MainForm : Form
         }
     }
 
-    private void ToggleDestinationStream(int destIndex)
+    private async void ToggleDestinationStream(int destIndex)
     {
         if (_destRunners == null || destIndex < 0 || destIndex >= _destRunners.Length) return;
         if (destIndex >= _config.Destinations.Count) return;
@@ -1060,29 +1208,69 @@ public sealed class MainForm : Form
         var dest = _config.Destinations[destIndex];
         var runner = _destRunners[destIndex];
 
-        if (runner.IsRunning)
-        {
-            runner.Stop();
-            dest.Enabled = false;
-            _settings.Save();
-            UpdateDestinationButtons();
-            UpdateOverallStreamStatus();
-        }
-        else
+        if (!runner.IsRunning)
         {
             if (string.IsNullOrWhiteSpace(dest.StreamKey) || string.IsNullOrWhiteSpace(dest.FullUrl))
             {
                 MessageBox.Show($"Please enter a valid Stream Key for {dest.Name}.", "Stream Key Required", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
+        }
 
-            dest.Enabled = true;
-            _settings.Save();
-            runner.Start(_config, dest);
+        // Provide immediate visual feedback on the button without blocking the UI
+        var btn = GetDestButton(destIndex);
+        if (btn != null)
+        {
+            btn.Text = runner.IsRunning ? "⏳ STOPPING..." : "⏳ STARTING...";
+            btn.Enabled = false;
+        }
+
+        await _streamActionLock.WaitAsync();
+        try
+        {
+            if (runner.IsRunning)
+            {
+                await Task.Run(() => runner.Stop());
+                dest.Enabled = false;
+                _settings.Save();
+            }
+            else
+            {
+                // Ensure master preview and broadcast hub is running
+                if (!_runner.IsRunning)
+                {
+                    await Task.Run(() => _runner.StartStandbyPreview(_config));
+                    await Task.Delay(800);
+                }
+
+                dest.Enabled = true;
+                _settings.Save();
+                await Task.Run(() => runner.Start(_config, dest));
+            }
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"[ERROR] [{dest.Name}] {ex.Message}");
+        }
+        finally
+        {
+            if (btn != null)
+            {
+                btn.Enabled = true;
+            }
+            _streamActionLock.Release();
             UpdateDestinationButtons();
             UpdateOverallStreamStatus();
         }
     }
+
+    private Button? GetDestButton(int index) => index switch
+    {
+        0 => _btnStreamFb,
+        1 => _btnStreamYt,
+        2 => _btnStreamYtNews,
+        _ => null
+    };
 
     private void UpdateDestinationButtons()
     {
@@ -1093,8 +1281,12 @@ public sealed class MainForm : Form
 
     private void UpdateDestBtn(Button btn, int index)
     {
+        if (index >= _config.Destinations.Count) return;
         if (_destRunners == null || index >= _destRunners.Length) return;
-        if (_destRunners[index].IsRunning)
+
+        bool isActive = _destRunners[index].IsRunning;
+
+        if (isActive)
         {
             btn.Text = "⏹ STOP";
             btn.BackColor = Color.FromArgb(220, 38, 38);
@@ -1106,22 +1298,54 @@ public sealed class MainForm : Form
         }
     }
 
-    private void ToggleStandbyPreview()
+    private async void ToggleStandbyPreview()
     {
-        if (_runner.IsRunning)
+        _btnPreview.Enabled = false;
+        await _streamActionLock.WaitAsync();
+        try
         {
-            if (GetActiveStreamCount() > 0)
+            if (_runner.IsRunning)
             {
-                MessageBox.Show("Cannot stop preview while streaming is ON AIR.", "Streaming Active", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return;
-            }
+                if (GetActiveStreamCount() > 0)
+                {
+                    MessageBox.Show("Cannot stop preview while streaming is active.", "Streaming Active", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
 
-            _runner.Stop();
+                await Task.Run(() => _runner.Stop());
+            }
+            else
+            {
+                await Task.Run(() => _runner.StartStandbyPreview(_config));
+            }
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"[ERROR] Preview: {ex.Message}");
+        }
+        finally
+        {
+            _btnPreview.Enabled = true;
+            _streamActionLock.Release();
             UpdateOverallStreamStatus();
         }
-        else
+    }
+
+    private async void RestartStandbyPreviewAsync()
+    {
+        await _streamActionLock.WaitAsync();
+        try
         {
-            _runner.StartStandbyPreview(_config);
+            await Task.Run(() =>
+            {
+                _runner.Stop();
+                _runner.StartStandbyPreview(_config);
+            });
+        }
+        catch { }
+        finally
+        {
+            _streamActionLock.Release();
             UpdateOverallStreamStatus();
         }
     }
@@ -1133,6 +1357,7 @@ public sealed class MainForm : Form
             _audioMonitor.Stop();
             _btnListen.Text = "🎧 LISTEN";
             _btnListen.BackColor = Color.FromArgb(51, 65, 85);
+            AppendLog("[STOPPED] Audio Monitoring");
         }
         else
         {
@@ -1141,6 +1366,13 @@ public sealed class MainForm : Form
             {
                 _btnListen.Text = "🔊 LISTENING";
                 _btnListen.BackColor = Color.FromArgb(14, 165, 233);
+                AppendLog($"[STARTED] Audio Monitoring ({_config.DeckLinkDevice})");
+            }
+            else
+            {
+                _btnListen.Text = "🎧 LISTEN";
+                _btnListen.BackColor = Color.FromArgb(51, 65, 85);
+                AppendLog($"[ERROR] Could not start audio monitoring for {_config.DeckLinkDevice}");
             }
         }
     }
@@ -1192,24 +1424,46 @@ public sealed class MainForm : Form
 
         _encoderCombo.SelectedIndex = _config.VideoEncoder switch
         {
-            VideoEncoderType.Auto => 0,
-            VideoEncoderType.H264_AMF => 1,
-            VideoEncoderType.H264_NVENC => 2,
+            VideoEncoderType.HEVC_NVENC => 0,
+            VideoEncoderType.H264_NVENC => 1,
+            VideoEncoderType.H264_AMF => 2,
             VideoEncoderType.LibX264 => 3,
+            VideoEncoderType.Auto => 4,
             _ => 0
         };
     }
 
+    private static readonly string _logFilePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "streaming.log");
+
     private void AppendLog(string message)
     {
-        if (IsDisposed) return;
+        if (IsDisposed || string.IsNullOrWhiteSpace(message)) return;
+
+        string trimmed = message.Trim();
+
+        // User requirement: In the log there should ONLY be started, stop, error types
+        bool isAllowed = trimmed.StartsWith("[STARTED", StringComparison.OrdinalIgnoreCase)
+                      || trimmed.StartsWith("[STOPPED", StringComparison.OrdinalIgnoreCase)
+                      || trimmed.StartsWith("[ERROR", StringComparison.OrdinalIgnoreCase)
+                      || trimmed.StartsWith("[SNAPSHOT", StringComparison.OrdinalIgnoreCase);
+
+        if (!isAllowed) return;
+
+        // Write to file immediately (thread-safe)
+        try
+        {
+            var stamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff");
+            File.AppendAllText(_logFilePath, $"[{stamp}] {trimmed}\r\n");
+        }
+        catch { }
+
         try
         {
             BeginInvoke(new Action(() =>
             {
                 if (IsDisposed) return;
                 var stamp = DateTime.Now.ToString("HH:mm:ss.fff");
-                _logTextBox.AppendText($"[{stamp}] {message}\r\n");
+                _logTextBox.AppendText($"[{stamp}] {trimmed}\r\n");
                 if (_logTextBox.TextLength > 50000)
                 {
                     _logTextBox.Text = _logTextBox.Text.Substring(10000);

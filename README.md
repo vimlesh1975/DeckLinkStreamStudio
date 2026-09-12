@@ -1,5 +1,7 @@
 # Sahyadri DeckLink Broadcaster (.NET 10 x64 Release)
 
+![Application Screenshot](image.png)
+
 High-performance broadcast streaming desktop application for Windows x64. Ingests a **single Blackmagic DeckLink SDI/HDMI source** and broadcasts simultaneously to **3 destinations**:
 1. **Sahyadri Facebook**
 2. **Sahyadri YouTube**

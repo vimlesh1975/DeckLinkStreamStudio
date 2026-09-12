@@ -26,6 +26,7 @@ public sealed class FfmpegStreamRunner : IDisposable
     private bool _isDisposed;
     private readonly string _ffmpegPath;
     private StreamConfig? _currentConfig;
+    private readonly TcpBroadcastHub _hub = new();
 
     public const int PreviewCenterWidth = 444;
     public const int PreviewTotalHeight = 250;
@@ -36,7 +37,7 @@ public sealed class FfmpegStreamRunner : IDisposable
     public event Action<StreamStats>? OnStatsUpdated;
     public event Action<System.Drawing.Bitmap>? OnPreviewFrame;
     public event Action<StreamStatus, string>? OnStatusChanged;
-    public event Action<int>? OnProcessExited;
+    public event Action<int, RunnerMode>? OnProcessExited;
 
     public bool IsRunning
     {
@@ -103,6 +104,7 @@ public sealed class FfmpegStreamRunner : IDisposable
                 Stop();
             }
 
+            _hub.Start();
             _currentConfig = config;
             CurrentMode = RunnerMode.StandbyPreview;
             var args = BuildStandbyPreviewArguments(config);
@@ -117,6 +119,7 @@ public sealed class FfmpegStreamRunner : IDisposable
             if (IsRunning)
             {
                 Stop();
+                Thread.Sleep(500); // Allow remote RTMP servers (Facebook/YouTube) to close TCP socket cleanly
             }
 
             _currentConfig = config;
@@ -127,6 +130,7 @@ public sealed class FfmpegStreamRunner : IDisposable
     }
 
     public static bool? _isNvencSupported;
+    public static bool? _isHevcNvencSupported;
     public static bool? _isAmfSupported;
 
     public static bool IsEncoderWorking(string codecName)
@@ -137,7 +141,7 @@ public sealed class FfmpegStreamRunner : IDisposable
             var psi = new ProcessStartInfo
             {
                 FileName = ffmpeg,
-                Arguments = $"-hide_banner -f lavfi -i testsrc=duration=1:size=64x64:rate=1 -c:v {codecName} -f null -",
+                Arguments = $"-hide_banner -f lavfi -i testsrc=duration=1:size=256x256:rate=1 -c:v {codecName} -f null -",
                 UseShellExecute = false,
                 CreateNoWindow = true,
                 RedirectStandardError = true
@@ -168,6 +172,13 @@ public sealed class FfmpegStreamRunner : IDisposable
         return _isNvencSupported.Value;
     }
 
+    public static bool IsHevcNvencAvailable()
+    {
+        if (_isHevcNvencSupported.HasValue) return _isHevcNvencSupported.Value;
+        _isHevcNvencSupported = IsEncoderWorking("hevc_nvenc");
+        return _isHevcNvencSupported.Value;
+    }
+
     public static bool IsAmfAvailable()
     {
         if (_isAmfSupported.HasValue) return _isAmfSupported.Value;
@@ -175,25 +186,43 @@ public sealed class FfmpegStreamRunner : IDisposable
         return _isAmfSupported.Value;
     }
 
+    public static bool IsFacebookDestination(DestinationConfig? dest)
+    {
+        if (dest == null) return false;
+        if (!string.IsNullOrWhiteSpace(dest.Id) && dest.Id.Trim().Equals("fb", StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (!string.IsNullOrWhiteSpace(dest.ServerUrl) && dest.ServerUrl.Contains("facebook.com", StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (!string.IsNullOrWhiteSpace(dest.FullUrl) && dest.FullUrl.Contains("facebook.com", StringComparison.OrdinalIgnoreCase))
+            return true;
+        return false;
+    }
+
     public static string GetVideoCodecArgs(VideoEncoderType requestedEncoder, int videoBitrateKbps, int gopSize)
     {
         var encoder = requestedEncoder;
         if (encoder == VideoEncoderType.Auto)
         {
-            if (IsAmfAvailable())
-                encoder = VideoEncoderType.H264_AMF;
+            if (IsHevcNvencAvailable())
+                encoder = VideoEncoderType.HEVC_NVENC;
             else if (IsNvencAvailable())
                 encoder = VideoEncoderType.H264_NVENC;
+            else if (IsAmfAvailable())
+                encoder = VideoEncoderType.H264_AMF;
             else
                 encoder = VideoEncoderType.LibX264;
         }
+        else if (encoder == VideoEncoderType.HEVC_NVENC && !IsHevcNvencAvailable())
+        {
+            encoder = IsNvencAvailable() ? VideoEncoderType.H264_NVENC : (IsAmfAvailable() ? VideoEncoderType.H264_AMF : VideoEncoderType.LibX264);
+        }
+        else if (encoder == VideoEncoderType.H264_NVENC && !IsNvencAvailable())
+        {
+            encoder = IsHevcNvencAvailable() ? VideoEncoderType.HEVC_NVENC : (IsAmfAvailable() ? VideoEncoderType.H264_AMF : VideoEncoderType.LibX264);
+        }
         else if (encoder == VideoEncoderType.H264_AMF && !IsAmfAvailable())
         {
-            encoder = IsNvencAvailable() ? VideoEncoderType.H264_NVENC : VideoEncoderType.LibX264;
-        }
-        else if ((encoder == VideoEncoderType.H264_NVENC || encoder == VideoEncoderType.HEVC_NVENC) && !IsNvencAvailable())
-        {
-            encoder = IsAmfAvailable() ? VideoEncoderType.H264_AMF : VideoEncoderType.LibX264;
+            encoder = IsHevcNvencAvailable() ? VideoEncoderType.HEVC_NVENC : (IsNvencAvailable() ? VideoEncoderType.H264_NVENC : VideoEncoderType.LibX264);
         }
 
         var videoBitrate = $"{videoBitrateKbps}k";
@@ -202,9 +231,9 @@ public sealed class FfmpegStreamRunner : IDisposable
 
         return encoder switch
         {
+            VideoEncoderType.HEVC_NVENC => $"-c:v hevc_nvenc -preset p4 -tune ll -delay 0 -g {gopSize} -bf 0 -b:v {videoBitrate} -maxrate {maxRate} -bufsize {bufSize} -pix_fmt yuv420p",
+            VideoEncoderType.H264_NVENC => $"-c:v h264_nvenc -preset p4 -tune ll -delay 0 -g {gopSize} -bf 0 -b:v {videoBitrate} -maxrate {maxRate} -bufsize {bufSize} -pix_fmt yuv420p",
             VideoEncoderType.H264_AMF => $"-c:v h264_amf -quality speed -rc cbr -g {gopSize} -forced_idr 1 -b:v {videoBitrate} -maxrate {maxRate} -bufsize {bufSize} -pix_fmt yuv420p",
-            VideoEncoderType.H264_NVENC => $"-c:v h264_nvenc -preset ll -tune ll -zerolatency 1 -g {gopSize} -bf 0 -b:v {videoBitrate} -maxrate {maxRate} -bufsize {bufSize} -pix_fmt yuv420p",
-            VideoEncoderType.HEVC_NVENC => $"-c:v hevc_nvenc -preset ll -tune ll -zerolatency 1 -g {gopSize} -bf 0 -b:v {videoBitrate} -maxrate {maxRate} -bufsize {bufSize} -pix_fmt yuv420p",
             _ => $"-c:v libx264 -preset veryfast -tune zerolatency -g {gopSize} -bf 0 -b:v {videoBitrate} -maxrate {maxRate} -bufsize {bufSize} -pix_fmt yuv420p"
         };
     }
@@ -285,11 +314,23 @@ public sealed class FfmpegStreamRunner : IDisposable
         // Input Source (File loop or DeckLink hardware)
         AppendInputSource(sb, config);
 
-        // Preview Filter: 16:9 scaled video + left/right audio VU meters
-        var filter = BuildPreviewFilterGraph(config, config.PreviewFps > 0 ? config.PreviewFps : 15);
+        var previewFps = config.PreviewFps > 0 ? config.PreviewFps : 15;
+        var filter = BuildLiveStreamFilterGraph(config, previewFps, dualEncoding: false);
         sb.Append($"-filter_complex \"{filter}\" ");
 
-        // Map preview to stdout pipe as raw bgr24 video
+        // Master broadcast stream encoded once and distributed via TCP Hub
+        var gopSize = Math.Max(25, (config.TargetFps > 0 ? config.TargetFps : 25) * config.KeyframeIntervalSeconds);
+        var videoCodecArgs = GetVideoCodecArgs(config.VideoEncoder, config.VideoBitrateKbps, gopSize);
+        var audioBitrate = $"{config.AudioBitrateKbps}k";
+        var audioCodecArgs = $"-c:a aac -b:a {audioBitrate} -ar 48000 -ac 2";
+
+        string repeatOpts = (config.VideoEncoder == VideoEncoderType.LibX264 || config.VideoEncoder == VideoEncoderType.Auto)
+            ? " -x264opts repeat-headers=1 "
+            : (config.VideoEncoder == VideoEncoderType.H264_NVENC ? " -forced-idr 1 " : " ");
+
+        sb.Append($"-map \"[v_stream]\" -map \"[a_stream]\" {videoCodecArgs}{repeatOpts}{audioCodecArgs} -f mpegts tcp://127.0.0.1:{TcpBroadcastHub.MasterPort} ");
+
+        // In-app video preview + VU meters via stdout pipe
         sb.Append("-map \"[tx_preview]\" -f rawvideo -pix_fmt bgr24 pipe:1");
 
         return sb.ToString();
@@ -303,38 +344,63 @@ public sealed class FfmpegStreamRunner : IDisposable
         // Input Source (File loop or DeckLink hardware)
         AppendInputSource(sb, config);
 
-        // Filter Complex for Preview + Deinterlacing / Scaling
-        var previewFps = config.PreviewFps > 0 ? config.PreviewFps : 15;
-        var filter = BuildLiveStreamFilterGraph(config, previewFps);
-        sb.Append($"-filter_complex \"{filter}\" ");
-
-        // Video and Audio Encoding settings
-        var gopSize = Math.Max(25, (config.TargetFps > 0 ? config.TargetFps : 25) * config.KeyframeIntervalSeconds);
-        var videoCodecArgs = GetVideoCodecArgs(config.VideoEncoder, config.VideoBitrateKbps, gopSize);
-
-        // Audio Codec
-        var audioBitrate = $"{config.AudioBitrateKbps}k";
-        var audioCodecArgs = $"-c:a aac -b:a {audioBitrate} -ar 48000 -ac 2";
-
         // Collect Enabled Destinations (Sahyadri Facebook, Sahyadri YouTube, Sahyadri YouTube News)
         var enabledDests = config.Destinations
             .Where(d => d.Enabled && !string.IsNullOrWhiteSpace(d.FullUrl))
             .ToList();
 
-        if (enabledDests.Count == 1)
+        var fbDests = enabledDests.Where(IsFacebookDestination).ToList();
+        var nonFbDests = enabledDests.Where(d => !IsFacebookDestination(d)).ToList();
+
+        bool isHevcRequested = config.VideoEncoder == VideoEncoderType.HEVC_NVENC ||
+                               (config.VideoEncoder == VideoEncoderType.Auto && IsHevcNvencAvailable());
+
+        // Facebook Live only supports H.264 (AVC) and rejects HEVC.
+        // If HEVC is requested and both Facebook and YouTube are active, dual hardware encoding is used.
+        bool dualEncoding = isHevcRequested && fbDests.Count > 0 && nonFbDests.Count > 0;
+
+        // Filter Complex for Preview + Deinterlacing / Scaling (+ dual stream splitting if needed)
+        var previewFps = config.PreviewFps > 0 ? config.PreviewFps : 15;
+        var filter = BuildLiveStreamFilterGraph(config, previewFps, dualEncoding);
+        sb.Append($"-filter_complex \"{filter}\" ");
+
+        var gopSize = Math.Max(25, (config.TargetFps > 0 ? config.TargetFps : 25) * config.KeyframeIntervalSeconds);
+        var audioBitrate = $"{config.AudioBitrateKbps}k";
+        var audioCodecArgs = $"-c:a aac -b:a {audioBitrate} -ar 48000 -ac 2";
+
+        if (dualEncoding)
         {
-            // Direct native FLV output: provides real-time byte tracking and live bitrate reporting in FFmpeg
-            sb.Append($"-map \"[v_stream]\" -map \"[a_stream]\" {videoCodecArgs} {audioCodecArgs} -max_muxing_queue_size 4096 -f flv \"{enabledDests[0].FullUrl}\" ");
+            // Output 1: Non-Facebook destinations (YouTube) encoded with HEVC (thread-isolated via fifo pseudo-muxer)
+            var hevcVideoCodecArgs = GetVideoCodecArgs(VideoEncoderType.HEVC_NVENC, config.VideoBitrateKbps, gopSize);
+            var nonFbTargets = nonFbDests.Select(d => $"[f=fifo:fifo_format=flv:drop_pkts_on_overflow=1:attempt_recovery=1:recovery_wait_time=1:max_recovery_attempts=5]{d.FullUrl}").ToList();
+            var nonFbChain = string.Join("|", nonFbTargets);
+            sb.Append($"-map \"[v_stream_hevc]\" -map \"[a_stream_hevc]\" {hevcVideoCodecArgs} {audioCodecArgs} -max_muxing_queue_size 4096 -f tee \"{nonFbChain}\" ");
+
+            // Output 2: Facebook destinations encoded with H.264 (thread-isolated via fifo pseudo-muxer)
+            var h264VideoCodecArgs = GetVideoCodecArgs(VideoEncoderType.LibX264, Math.Min(config.VideoBitrateKbps, 6000), gopSize);
+            var fbTargets = fbDests.Select(d => $"[f=fifo:fifo_format=flv:drop_pkts_on_overflow=1:attempt_recovery=1:recovery_wait_time=1:max_recovery_attempts=5]{d.FullUrl}").ToList();
+            var fbChain = string.Join("|", fbTargets);
+            sb.Append($"-map \"[v_stream_h264]\" -map \"[a_stream_h264]\" {h264VideoCodecArgs} {audioCodecArgs} -max_muxing_queue_size 4096 -f tee \"{fbChain}\" ");
         }
-        else if (enabledDests.Count > 1)
+        else
         {
-            // Broadcast Outputs via Tee Muxer with fault isolation
-            var activeTargets = enabledDests.Select(d => $"[f=flv:onfail=ignore]{d.FullUrl}");
+            // Single encoding branch (CPU libx264 or H264 NVENC)
+            var effectiveEncoder = (nonFbDests.Count == 0 && fbDests.Count > 0 && config.VideoEncoder == VideoEncoderType.HEVC_NVENC)
+                ? VideoEncoderType.LibX264
+                : config.VideoEncoder;
+
+            var videoBitrateKbps = (fbDests.Count > 0 && nonFbDests.Count == 0)
+                ? Math.Min(config.VideoBitrateKbps, 6000)
+                : config.VideoBitrateKbps;
+
+            var videoCodecArgs = GetVideoCodecArgs(effectiveEncoder, videoBitrateKbps, gopSize);
+
+            var activeTargets = enabledDests.Select(d => $"[f=fifo:fifo_format=flv:drop_pkts_on_overflow=1:attempt_recovery=1:recovery_wait_time=1:max_recovery_attempts=5]{d.FullUrl}").ToList();
             var teeChain = string.Join("|", activeTargets);
             sb.Append($"-map \"[v_stream]\" -map \"[a_stream]\" {videoCodecArgs} {audioCodecArgs} -max_muxing_queue_size 4096 -f tee \"{teeChain}\" ");
         }
 
-        // Output preview to pipe:1 for in-app operator monitor
+        // Map preview to stdout pipe as raw bgr24 video for live in-app preview and audio meters
         sb.Append("-map \"[tx_preview]\" -f rawvideo -pix_fmt bgr24 pipe:1");
 
         return sb.ToString();
@@ -370,7 +436,7 @@ public sealed class FfmpegStreamRunner : IDisposable
                "[left_bar][v_scaled][right_bar]hstack=inputs=3,format=bgr24[tx_preview]";
     }
 
-    private string BuildLiveStreamFilterGraph(StreamConfig config, int previewFps)
+    private string BuildLiveStreamFilterGraph(StreamConfig config, int previewFps, bool dualEncoding = false)
     {
         var sb = new StringBuilder();
 
@@ -382,6 +448,11 @@ public sealed class FfmpegStreamRunner : IDisposable
         else
         {
             sb.Append("[0:a]aresample=48000,asplit=2[a_stream][a_for_meter];");
+        }
+
+        if (dualEncoding)
+        {
+            sb.Append("[a_stream]asplit=2[a_stream_hevc][a_stream_h264];");
         }
 
         // Split audio for Left and Right VU meter
@@ -411,8 +482,13 @@ public sealed class FfmpegStreamRunner : IDisposable
         videoProcess += "format=yuv420p";
 
         // Split input video into main stream and preview stage
-        sb.Append($"[0:v]split=2[v_raw_stream][v_raw_preview];");
+        sb.Append("[0:v]split=2[v_raw_stream][v_raw_preview];");
         sb.Append($"[v_raw_stream]{videoProcess}[v_stream];");
+
+        if (dualEncoding)
+        {
+            sb.Append("[v_stream]split=2[v_stream_hevc][v_stream_h264];");
+        }
 
         // Preview scaled stage
         sb.Append($"[v_raw_preview]scale={PreviewCenterWidth}:{PreviewTotalHeight}:force_original_aspect_ratio=decrease,pad={PreviewCenterWidth}:{PreviewTotalHeight}:(ow-iw)/2:(oh-ih)/2,fps={previewFps},format=yuv420p[v_scaled];");
@@ -450,9 +526,18 @@ public sealed class FfmpegStreamRunner : IDisposable
             };
 
             proc.ErrorDataReceived += OnProcessErrorData;
-            proc.Exited += OnProcessExitedHandler;
+            proc.Exited += (s, e) => OnProcessExitedHandler(proc, mode);
 
-            OnLog?.Invoke($"[START {mode}] {_ffmpegPath} {arguments}");
+            if (mode == RunnerMode.LiveStream)
+            {
+                var enabled = _currentConfig?.Destinations?.Where(d => d.Enabled && !string.IsNullOrWhiteSpace(d.FullUrl)).Select(d => d.Name).ToList() ?? new();
+                var names = enabled.Count > 0 ? string.Join(", ", enabled) : "Live Stream";
+                OnLog?.Invoke($"[STARTED] Live Stream -> {names}");
+            }
+            else
+            {
+                OnLog?.Invoke($"[STARTED] Standby Preview ({_currentConfig?.DeckLinkDevice ?? "Input"})");
+            }
 
             if (!proc.Start())
             {
@@ -465,10 +550,10 @@ public sealed class FfmpegStreamRunner : IDisposable
 
             proc.BeginErrorReadLine();
 
-            // Start reading preview frames from stdout (848x450 bgr24)
+            // Preview reader runs for both StandbyPreview and LiveStream mode so video preview and meters stay live
             _previewReader = new StreamPreviewReader(proc.StandardOutput.BaseStream, PreviewTotalWidth, PreviewTotalHeight);
             _previewReader.OnFrameAvailable += frame => OnPreviewFrame?.Invoke(frame);
-            _previewReader.OnError += ex => OnLog?.Invoke($"[Preview Error] {ex.Message}");
+            _previewReader.OnError += ex => OnLog?.Invoke($"[ERROR] Preview: {ex.Message}");
             _previewReader.Start();
 
             var newStatus = mode == RunnerMode.LiveStream ? StreamStatus.OnAir : StreamStatus.StandbyPreview;
@@ -478,17 +563,36 @@ public sealed class FfmpegStreamRunner : IDisposable
         }
         catch (Exception ex)
         {
-            OnLog?.Invoke($"[Launch Exception] {ex.Message}");
+            OnLog?.Invoke($"[ERROR] Launch: {ex.Message}");
             OnStatusChanged?.Invoke(StreamStatus.Error, ex.Message);
             return false;
         }
+    }
+
+    public static bool IsFfmpegError(string line)
+    {
+        if (string.IsNullOrWhiteSpace(line)) return false;
+        if (line.Contains("Failed to update header", StringComparison.OrdinalIgnoreCase)) return false;
+        if (line.Contains("time=") && line.Contains("fps=")) return false;
+
+        return line.Contains("fatal", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("error", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("failed", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("cannot open", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("could not open", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("rejected", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("exception", StringComparison.OrdinalIgnoreCase);
     }
 
     private void OnProcessErrorData(object sender, DataReceivedEventArgs e)
     {
         if (string.IsNullOrWhiteSpace(e.Data)) return;
 
-        OnLog?.Invoke(e.Data);
+        if (IsFfmpegError(e.Data))
+        {
+            OnLog?.Invoke($"[ERROR] {e.Data.Trim()}");
+        }
+
         ParseProgressStats(e.Data);
     }
 
@@ -574,70 +678,117 @@ public sealed class FfmpegStreamRunner : IDisposable
         OnStatsUpdated?.Invoke(stats);
     }
 
-    private void OnProcessExitedHandler(object? sender, EventArgs e)
+    private void OnProcessExitedHandler(Process proc, RunnerMode mode)
     {
         int exitCode = -1;
-        try
+        lock (_syncRoot)
         {
-            exitCode = _process?.ExitCode ?? -1;
-        }
-        catch { }
+            // If this process is no longer the active _process, it was stopped intentionally or replaced
+            if (_process != proc)
+            {
+                return;
+            }
 
-        OnLog?.Invoke($"[Process Exited] Exit code: {exitCode}");
+            try
+            {
+                exitCode = proc.ExitCode;
+            }
+            catch { }
+
+            _process = null;
+        }
+
+        if (exitCode != 0 && exitCode != 255)
+        {
+            OnLog?.Invoke($"[ERROR] {mode} stopped unexpectedly (Exit code: {exitCode})");
+        }
+        else
+        {
+            OnLog?.Invoke($"[STOPPED] {mode}");
+        }
+
         OnStatusChanged?.Invoke(StreamStatus.Offline, "OFFLINE");
-        OnProcessExited?.Invoke(exitCode);
+        OnProcessExited?.Invoke(exitCode, mode);
     }
 
     public void Stop()
     {
+        Process? procToStop;
+        StreamPreviewReader? readerToStop;
+
         lock (_syncRoot)
         {
             if (_process == null) return;
 
+            procToStop = _process;
+            _process = null; // Unhook immediately so OnProcessExitedHandler will ignore this process!
+
+            readerToStop = _previewReader;
+            _previewReader = null;
+        }
+
+        OnLog?.Invoke($"[STOPPED] {CurrentMode}");
+
+        try
+        {
             try
             {
-                _previewReader?.Stop();
-                _previewReader?.Dispose();
-                _previewReader = null;
-
-                if (!_process.HasExited)
-                {
-                    try
-                    {
-                        _process.StandardInput.WriteLine("q");
-                        _process.StandardInput.Flush();
-                    }
-                    catch { }
-
-                    if (!_process.WaitForExit(2500))
-                    {
-                        OnLog?.Invoke("[Stop] FFmpeg process did not exit after 'q'. Killing tree.");
-                        _process.Kill(true);
-                    }
-                }
+                procToStop.EnableRaisingEvents = false;
             }
-            catch (Exception ex)
+            catch { }
+
+            if (!procToStop.HasExited)
             {
-                OnLog?.Invoke($"[Stop Exception] {ex.Message}");
                 try
                 {
-                    _process.Kill(true);
+                    procToStop.StandardInput.WriteLine("q");
+                    procToStop.StandardInput.Flush();
+                    procToStop.StandardInput.Close();
                 }
                 catch { }
-            }
-            finally
-            {
-                _process.Dispose();
-                _process = null;
-            }
 
-            CurrentStats.IsActive = false;
-            CurrentStats.Status = StreamStatus.Offline;
-            CurrentStats.CurrentBitrateKbps = 0;
-            CurrentStats.CurrentFps = 0;
-
-            OnStatusChanged?.Invoke(StreamStatus.Offline, "OFFLINE");
+                if (!procToStop.WaitForExit(3500))
+                {
+                    OnLog?.Invoke("[ERROR] Process did not exit after 'q', terminated.");
+                    procToStop.Kill(true);
+                    procToStop.WaitForExit(1000);
+                }
+            }
         }
+        catch (Exception ex)
+        {
+            OnLog?.Invoke($"[ERROR] Stop: {ex.Message}");
+            try
+            {
+                procToStop.Kill(true);
+            }
+            catch { }
+        }
+        finally
+        {
+            // Only stop/dispose the preview reader AFTER FFmpeg has exited!
+            // Closing while FFmpeg is still writing produces Broken Pipe (-32).
+            try
+            {
+                readerToStop?.Stop();
+                readerToStop?.Dispose();
+            }
+            catch { }
+
+            try
+            {
+                procToStop.Dispose();
+            }
+            catch { }
+        }
+
+        _hub.Stop();
+        CurrentStats.IsActive = false;
+        CurrentStats.Status = StreamStatus.Offline;
+        CurrentStats.CurrentBitrateKbps = 0;
+        CurrentStats.CurrentFps = 0;
+
+        OnStatusChanged?.Invoke(StreamStatus.Offline, "OFFLINE");
     }
 
     public void Dispose()
@@ -645,5 +796,6 @@ public sealed class FfmpegStreamRunner : IDisposable
         if (_isDisposed) return;
         _isDisposed = true;
         Stop();
+        _hub.Dispose();
     }
 }
