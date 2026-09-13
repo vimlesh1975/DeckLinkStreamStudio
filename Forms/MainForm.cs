@@ -21,7 +21,6 @@ public sealed class MainForm : Form
 
     // Top Master Header
     private readonly Panel _topHeader = new();
-    private readonly Label _appTitle = new();
     private readonly Label _lblCard = new();
     private readonly ComboBox _deviceComboBox = new();
     private readonly Label _lblFormat = new();
@@ -123,6 +122,25 @@ public sealed class MainForm : Form
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool GetSystemTimes(out FILETIME idleTime, out FILETIME kernelTime, out FILETIME userTime);
 
+    [DllImport("user32.dll")]
+    private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
+    private const int EM_SETMARGINS = 0x00D3;
+    private const int EC_LEFTMARGIN = 0x0001;
+    private const int EC_RIGHTMARGIN = 0x0002;
+
+    private static void SetTextBoxPadding(TextBox tb, int left, int right)
+    {
+        void apply()
+        {
+            if (tb.IsHandleCreated)
+            {
+                SendMessage(tb.Handle, EM_SETMARGINS, (IntPtr)(EC_LEFTMARGIN | EC_RIGHTMARGIN), (IntPtr)(left | (right << 16)));
+            }
+        }
+        apply();
+        tb.HandleCreated += (s, e) => apply();
+    }
+
     private ulong _lastIdleTicks;
     private ulong _lastKernelTicks;
     private ulong _lastUserTicks;
@@ -221,16 +239,72 @@ public sealed class MainForm : Form
 
     private void InitializeForm()
     {
-        Text = "Sahyadri DeckLink Broadcaster (x64 Release)";
+        Text = GetAppTitle();
         FormBorderStyle = FormBorderStyle.FixedSingle;
         MaximizeBox = false;
-        Size = new Size(720, 800);
-        MinimumSize = new Size(720, 800);
-        MaximumSize = new Size(720, 800);
+        Size = new Size(576, 800);
+        MinimumSize = new Size(576, 800);
+        MaximumSize = new Size(576, 800);
         StartPosition = FormStartPosition.CenterScreen;
         Font = new Font("Segoe UI", 9f);
-        Icon = SystemIcons.Application;
+        Icon = LoadStreamingIcon();
         _baseFormHeight = Height;
+    }
+
+    private static Icon LoadStreamingIcon()
+    {
+        try
+        {
+            // 1. Try loading app.ico from application directory
+            string icoPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "app.ico");
+            if (File.Exists(icoPath))
+            {
+                return new Icon(icoPath);
+            }
+
+            // 2. Try extracting from executing process
+            string? exePath = Environment.ProcessPath ?? Application.ExecutablePath;
+            if (!string.IsNullOrEmpty(exePath) && File.Exists(exePath))
+            {
+                var assocIcon = Icon.ExtractAssociatedIcon(exePath);
+                if (assocIcon != null) return assocIcon;
+            }
+        }
+        catch { }
+
+        return SystemIcons.Application;
+    }
+
+    private static string GetAppTitle()
+    {
+        try
+        {
+            // 1. Try reading the suffix directly from the running executable file name
+            // e.g. "DeckLinkStreamStudio_13092026_112449.exe" -> "_13092026_112449"
+            string? exePath = Environment.ProcessPath ?? Application.ExecutablePath;
+            if (!string.IsNullOrEmpty(exePath))
+            {
+                string exeName = Path.GetFileNameWithoutExtension(exePath);
+                int underscoreIdx = exeName.IndexOf('_');
+                if (underscoreIdx >= 0)
+                {
+                    string suffix = exeName.Substring(underscoreIdx);
+                    return $"📡 DeckLink Stream Studio {suffix}";
+                }
+            }
+
+            // 2. Try reading from Assembly Name
+            string asmName = System.Reflection.Assembly.GetExecutingAssembly().GetName().Name ?? "";
+            int asmIdx = asmName.IndexOf('_');
+            if (asmIdx >= 0)
+            {
+                string suffix = asmName.Substring(asmIdx);
+                return $"📡 DeckLink Stream Studio {suffix}";
+            }
+        }
+        catch { }
+
+        return "📡 DeckLink Stream Studio";
     }
 
     private void InitializeTopHeader()
@@ -240,23 +314,17 @@ public sealed class MainForm : Form
         _topHeader.Padding = new Padding(8, 6, 8, 6);
 
         // Row 1: Ingest Hardware & Status
-        _appTitle.Text = "📡 LIVE";
-        _appTitle.Font = new Font("Segoe UI", 10f, FontStyle.Bold);
-        _appTitle.ForeColor = Color.FromArgb(56, 189, 248);
-        _appTitle.AutoSize = true;
-        _appTitle.Location = new Point(8, 10);
-
         _lblCard.Text = "CARD:";
         _lblCard.Font = new Font("Segoe UI", 8f, FontStyle.Bold);
         _lblCard.AutoSize = true;
-        _lblCard.Location = new Point(66, 12);
+        _lblCard.Location = new Point(8, 12);
 
         _deviceComboBox.DropDownStyle = ComboBoxStyle.DropDownList;
         _deviceComboBox.FlatStyle = FlatStyle.Flat;
         _deviceComboBox.Font = new Font("Segoe UI", 8.5f);
-        _deviceComboBox.Width = 120;
+        _deviceComboBox.Width = 115;
         _deviceComboBox.DropDownWidth = 180;
-        _deviceComboBox.Location = new Point(108, 8);
+        _deviceComboBox.Location = new Point(54, 8);
 
         foreach (var d in _devices) _deviceComboBox.Items.Add(d.Name);
         int devIdx = _deviceComboBox.FindStringExact(_config.DeckLinkDevice);
@@ -297,17 +365,18 @@ public sealed class MainForm : Form
             }
         };
 
-        // Video Standard Dropdown (STD) - 165px wide
+        // Video Standard Dropdown (STD)
         _lblFormat.Text = "STD:";
         _lblFormat.Font = new Font("Segoe UI", 8f, FontStyle.Bold);
         _lblFormat.AutoSize = true;
-        _lblFormat.Location = new Point(234, 12);
+        _lblFormat.Location = new Point(178, 12);
 
         _formatComboBox.DropDownStyle = ComboBoxStyle.DropDownList;
         _formatComboBox.FlatStyle = FlatStyle.Flat;
         _formatComboBox.Font = new Font("Segoe UI", 8.5f);
-        _formatComboBox.Width = 165;
-        _formatComboBox.Location = new Point(266, 8);
+        _formatComboBox.Width = 135;
+        _formatComboBox.DropDownWidth = 180;
+        _formatComboBox.Location = new Point(214, 8);
 
         foreach (var std in DeckLinkStandardItem.Standards) _formatComboBox.Items.Add(std);
         int stdIdx = 0;
@@ -338,8 +407,8 @@ public sealed class MainForm : Form
 
         // CPU Usage Badge (Big, prominent font)
         _cpuBadge.Text = "CPU: 0%";
-        _cpuBadge.Font = new Font("Segoe UI", 12.5f, FontStyle.Bold);
-        _cpuBadge.Padding = new Padding(8, 2, 8, 2);
+        _cpuBadge.Font = new Font("Segoe UI", 11.5f, FontStyle.Bold);
+        _cpuBadge.Padding = new Padding(6, 2, 6, 2);
         _cpuBadge.AutoSize = true;
         _cpuBadge.BackColor = Color.FromArgb(30, 41, 59);
         _cpuBadge.ForeColor = Color.FromArgb(56, 189, 248);
@@ -352,7 +421,7 @@ public sealed class MainForm : Form
         _btnPreview.ForeColor = Color.White;
         _btnPreview.FlatStyle = FlatStyle.Flat;
         _btnPreview.FlatAppearance.BorderSize = 0;
-        _btnPreview.Width = 135;
+        _btnPreview.Width = 115;
         _btnPreview.Height = 26;
         _btnPreview.Location = new Point(8, 36);
         _btnPreview.Click += (s, e) => ToggleStandbyPreview();
@@ -363,9 +432,9 @@ public sealed class MainForm : Form
         _btnListen.ForeColor = Color.FromArgb(226, 232, 240);
         _btnListen.FlatStyle = FlatStyle.Flat;
         _btnListen.FlatAppearance.BorderSize = 0;
-        _btnListen.Width = 85;
+        _btnListen.Width = 78;
         _btnListen.Height = 26;
-        _btnListen.Location = new Point(148, 36);
+        _btnListen.Location = new Point(128, 36);
         _btnListen.Click += (s, e) => ToggleAudioListen();
 
         // Logs checkbox
@@ -392,7 +461,6 @@ public sealed class MainForm : Form
             ApplyTheme(_chkDarkMode.Checked);
         };
 
-        _topHeader.Controls.Add(_appTitle);
         _topHeader.Controls.Add(_lblCard);
         _topHeader.Controls.Add(_deviceComboBox);
         _topHeader.Controls.Add(_lblFormat);
@@ -411,7 +479,7 @@ public sealed class MainForm : Form
 
     private void UpdateHeaderBadgePositions()
     {
-        _cpuBadge.Location = new Point(_formatComboBox.Right + 16, 5);
+        _cpuBadge.Location = new Point(_formatComboBox.Right + 12, 5);
     }
 
     private void LayoutTopHeaderRightControls()
@@ -492,7 +560,7 @@ public sealed class MainForm : Form
         _lblAudioDelay.Text = "Delay:";
         _lblAudioDelay.Font = new Font("Segoe UI", 8f);
         _lblAudioDelay.AutoSize = true;
-        _lblAudioDelay.Location = new Point(68, 8);
+        _lblAudioDelay.Location = new Point(66, 8);
 
         _delayUpDown.BorderStyle = BorderStyle.FixedSingle;
         _delayUpDown.Font = new Font("Segoe UI", 8f);
@@ -501,7 +569,7 @@ public sealed class MainForm : Form
         _delayUpDown.Value = _config.AudioDelayMs;
         _delayUpDown.Increment = 50;
         _delayUpDown.Width = 55;
-        _delayUpDown.Location = new Point(106, 5);
+        _delayUpDown.Location = new Point(108, 5);
         _delayUpDown.ValueChanged += (s, e) =>
         {
             _config.AudioDelayMs = (int)_delayUpDown.Value;
@@ -514,7 +582,7 @@ public sealed class MainForm : Form
         _btnSnapshot.FlatAppearance.BorderSize = 0;
         _btnSnapshot.Width = 58;
         _btnSnapshot.Height = 22;
-        _btnSnapshot.Location = new Point(168, 4);
+        _btnSnapshot.Location = new Point(172, 4);
         _btnSnapshot.Click += (s, e) => TakeSnapshot();
 
         _btnFullscreen.Text = "⛶ FULL";
@@ -523,7 +591,7 @@ public sealed class MainForm : Form
         _btnFullscreen.FlatAppearance.BorderSize = 0;
         _btnFullscreen.Width = 55;
         _btnFullscreen.Height = 22;
-        _btnFullscreen.Location = new Point(230, 4);
+        _btnFullscreen.Location = new Point(236, 4);
         _btnFullscreen.Click += (s, e) => OpenFullscreen();
 
         _videoToolBar.Controls.Add(_chkDeinterlace);
@@ -569,8 +637,8 @@ public sealed class MainForm : Form
         _encoderCombo.DropDownStyle = ComboBoxStyle.DropDownList;
         _encoderCombo.FlatStyle = FlatStyle.Flat;
         _encoderCombo.Font = new Font("Segoe UI", 8.5f);
-        _encoderCombo.Width = 155;
-        _encoderCombo.Location = new Point(94, 6);
+        _encoderCombo.Width = 130;
+        _encoderCombo.Location = new Point(96, 6);
         _encoderCombo.Items.Add("NVIDIA HEVC (H.265)");
         _encoderCombo.Items.Add("NVIDIA H.264 (NVENC)");
         _encoderCombo.Items.Add("AMD GPU (AMF)");
@@ -607,7 +675,7 @@ public sealed class MainForm : Form
         _lblEncoderTitle.Text = "Bitrate:";
         _lblEncoderTitle.Font = new Font("Segoe UI", 8f);
         _lblEncoderTitle.AutoSize = true;
-        _lblEncoderTitle.Location = new Point(258, 10);
+        _lblEncoderTitle.Location = new Point(242, 10);
         _hwSettingsPanel.Controls.Add(_lblEncoderTitle);
 
         _bitrateUpDown.BorderStyle = BorderStyle.FixedSingle;
@@ -616,8 +684,8 @@ public sealed class MainForm : Form
         _bitrateUpDown.Maximum = 30000;
         _bitrateUpDown.Increment = 500;
         _bitrateUpDown.Value = _config.VideoBitrateKbps;
-        _bitrateUpDown.Width = 70;
-        _bitrateUpDown.Location = new Point(306, 7);
+        _bitrateUpDown.Width = 62;
+        _bitrateUpDown.Location = new Point(294, 7);
         _bitrateUpDown.ValueChanged += (s, e) =>
         {
             _config.VideoBitrateKbps = (int)_bitrateUpDown.Value;
@@ -632,14 +700,14 @@ public sealed class MainForm : Form
         _lblKbps.Text = "kbps";
         _lblKbps.Font = new Font("Segoe UI", 8f);
         _lblKbps.AutoSize = true;
-        _lblKbps.Location = new Point(380, 10);
+        _lblKbps.Location = new Point(362, 10);
         _hwSettingsPanel.Controls.Add(_lblKbps);
     }
 
     private void InitializeRightDestinationsPanel()
     {
         _rightPanel.Dock = DockStyle.Top;
-        _rightPanel.Height = 306;
+        _rightPanel.Height = 318;
         _rightPanel.Padding = new Padding(0, 2, 0, 0);
         _rightPanel.AutoScroll = false; // Zero scrollbars on URL part!
 
@@ -657,13 +725,13 @@ public sealed class MainForm : Form
         BuildDestinationCard(_pnlFb, Color.FromArgb(59, 130, 246), 0, y,
             _lblFbTitle, _txtFbTitle, _lblFbUrl, _txtFbUrl, _btnStreamFb, _lblFbKey, _txtFbKey, _btnToggleFbKey);
         _rightPanel.Controls.Add(_pnlFb);
-        y += 94;
+        y += 96;
 
         // Destination 2: Sahyadri YouTube Card
         BuildDestinationCard(_pnlYt, Color.FromArgb(239, 68, 68), 1, y,
             _lblYtTitle, _txtYtTitle, _lblYtUrl, _txtYtUrl, _btnStreamYt, _lblYtKey, _txtYtKey, _btnToggleYtKey);
         _rightPanel.Controls.Add(_pnlYt);
-        y += 94;
+        y += 96;
 
         // Destination 3: Sahyadri YouTube News Card
         BuildDestinationCard(_pnlYtNews, Color.FromArgb(245, 158, 11), 2, y,
@@ -685,32 +753,33 @@ public sealed class MainForm : Form
     private void BuildDestinationCard(Panel pnl, Color accentColor, int destIndex, int y,
         Label lblTitle, TextBox txtTitle, Label lblUrl, TextBox txtUrl, Button btnStream, Label lblKey, TextBox txtKey, Button btnEye)
     {
-        int initialWidth = Math.Max(280, _leftPanel.ClientSize.Width > 0 ? _leftPanel.ClientSize.Width - 12 : 690);
+        int initialWidth = Math.Max(280, _leftPanel.ClientSize.Width > 0 ? _leftPanel.ClientSize.Width - 12 : 536);
         pnl.Location = new Point(6, y);
-        pnl.Size = new Size(initialWidth, 88);
+        pnl.Size = new Size(initialWidth, 90);
         pnl.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
         pnl.Padding = new Padding(6);
 
         var accentStrip = new Panel
         {
             Location = new Point(0, 0),
-            Size = new Size(4, 88),
+            Size = new Size(4, 90),
             BackColor = accentColor
         };
         pnl.Controls.Add(accentStrip);
 
         // Stream Name Field - locked by default, double-click to unlock for editing
         lblTitle.Text = "🔒 Stream:";
-        lblTitle.Font = new Font("Segoe UI", 8.5f, FontStyle.Bold);
+        lblTitle.Font = new Font("Segoe UI", 9f, FontStyle.Bold);
         lblTitle.AutoSize = true;
         var titleToolTip = new ToolTip();
         titleToolTip.SetToolTip(lblTitle, "Double-click to unlock and rename stream destination");
         titleToolTip.SetToolTip(txtTitle, "Double-click to unlock and rename stream destination");
 
         txtTitle.BorderStyle = BorderStyle.FixedSingle;
-        txtTitle.Font = new Font("Segoe UI", 9f, FontStyle.Bold);
+        txtTitle.Font = new Font("Segoe UI", 10f, FontStyle.Bold);
         txtTitle.ReadOnly = true;
         txtTitle.Cursor = Cursors.Arrow;
+        SetTextBoxPadding(txtTitle, 8, 6);
         txtTitle.Text = _config.Destinations[destIndex].Name;
         txtTitle.Select(0, 0);
         txtTitle.TextChanged += (s, e) =>
@@ -768,6 +837,7 @@ public sealed class MainForm : Form
         txtUrl.Font = new Font("Segoe UI", 9f);
         txtUrl.ReadOnly = true;
         txtUrl.Cursor = Cursors.Arrow;
+        SetTextBoxPadding(txtUrl, 8, 6);
         txtUrl.Text = _config.Destinations[destIndex].ServerUrl;
         txtUrl.Select(0, 0);
         txtUrl.TextChanged += (s, e) =>
@@ -810,7 +880,7 @@ public sealed class MainForm : Form
         pnl.Controls.Add(txtUrl);
 
         // STREAM Button to right of URL
-        btnStream.Text = "🔴 STREAM";
+        btnStream.Text = "● STREAM";
         btnStream.Font = new Font("Segoe UI", 8f, FontStyle.Bold);
         btnStream.BackColor = Color.FromArgb(16, 185, 129);
         btnStream.ForeColor = Color.White;
@@ -821,20 +891,57 @@ public sealed class MainForm : Form
         btnStream.Click += (s, e) => ToggleDestinationStream(destIndex);
         pnl.Controls.Add(btnStream);
 
-        // Key Field
-        lblKey.Text = "Key:";
+        // Key Field - locked by default, double-click to unlock for editing
+        lblKey.Text = "🔒 Key:";
         lblKey.Font = new Font("Segoe UI", 8.5f, FontStyle.Bold);
         lblKey.AutoSize = true;
+        var keyToolTip = new ToolTip();
+        keyToolTip.SetToolTip(lblKey, "Double-click Key field to unlock for editing");
+        keyToolTip.SetToolTip(txtKey, "Double-click to unlock for editing");
 
         txtKey.BorderStyle = BorderStyle.FixedSingle;
         txtKey.Font = new Font("Segoe UI", 9f);
+        txtKey.ReadOnly = true;
+        txtKey.Cursor = Cursors.Arrow;
         txtKey.UseSystemPasswordChar = true;
+        SetTextBoxPadding(txtKey, 8, 6);
         txtKey.Text = _config.Destinations[destIndex].StreamKey;
         txtKey.Select(0, 0);
         txtKey.TextChanged += (s, e) =>
         {
             _config.Destinations[destIndex].StreamKey = txtKey.Text;
             _settings.Save();
+        };
+
+        Action unlockKeyEdit = () =>
+        {
+            txtKey.ReadOnly = false;
+            txtKey.Cursor = Cursors.IBeam;
+            txtKey.BackColor = _settings.DarkMode ? Color.FromArgb(55, 65, 85) : Color.FromArgb(255, 255, 240);
+            lblKey.Text = "✏️ Key:";
+            txtKey.Focus();
+            txtKey.SelectAll();
+        };
+
+        lblKey.DoubleClick += (s, e) => unlockKeyEdit();
+        txtKey.DoubleClick += (s, e) => unlockKeyEdit();
+
+        txtKey.KeyDown += (s, e) =>
+        {
+            if (e.KeyCode == Keys.Enter || e.KeyCode == Keys.Escape)
+            {
+                pnl.Focus();
+                e.Handled = true;
+                e.SuppressKeyPress = true;
+            }
+        };
+
+        txtKey.Leave += (s, e) =>
+        {
+            txtKey.ReadOnly = true;
+            txtKey.Cursor = Cursors.Arrow;
+            lblKey.Text = "🔒 Key:";
+            txtKey.BackColor = _settings.DarkMode ? Color.FromArgb(42, 50, 68) : Color.FromArgb(241, 245, 249);
         };
 
         btnEye.Text = "👁";
@@ -852,38 +959,38 @@ public sealed class MainForm : Form
         pnl.Controls.Add(txtKey);
         pnl.Controls.Add(btnEye);
 
-        // Responsive layout: 75% width for value boxes, horizontal alignment, and left margin
-        const int leftMargin = 14;
-        const int boxX = 82;
+        // Responsive layout: proportional width for value boxes, horizontal alignment, and left/vertical padding
+        const int leftMargin = 10;
+        const int boxX = 100;
 
         Action layoutCard = () =>
         {
             int w = pnl.ClientSize.Width;
             if (w <= 0) return;
 
-            int boxWidth = Math.Max(80, (int)(w * 0.75));
-            int btnX = boxX + boxWidth + 6;
-            int btnWidth = Math.Max(36, w - 6 - btnX);
+            int btnWidth = 76;
+            int btnX = w - 6 - btnWidth;
+            int boxWidth = Math.Max(80, btnX - 8 - boxX);
 
-            // Row 1: Stream Name
-            lblTitle.Location = new Point(leftMargin, 8);
+            // Row 1: Stream Name (with top & vertical padding)
+            lblTitle.Location = new Point(leftMargin, 7);
             txtTitle.Location = new Point(boxX, 5);
             txtTitle.Width = boxWidth;
 
-            // Row 2: URL + STREAM button
-            lblUrl.Location = new Point(leftMargin, 34);
-            txtUrl.Location = new Point(boxX, 31);
+            // Row 2: URL + STREAM button (with row padding)
+            lblUrl.Location = new Point(leftMargin, 35);
+            txtUrl.Location = new Point(boxX, 33);
             txtUrl.Width = boxWidth;
 
-            btnStream.Location = new Point(btnX, 30);
+            btnStream.Location = new Point(btnX, 32);
             btnStream.Width = btnWidth;
 
-            // Row 3: Key + Eye button
-            lblKey.Location = new Point(leftMargin, 61);
-            txtKey.Location = new Point(boxX, 58);
+            // Row 3: Key + Eye button (with row padding)
+            lblKey.Location = new Point(leftMargin, 63);
+            txtKey.Location = new Point(boxX, 61);
             txtKey.Width = boxWidth;
 
-            btnEye.Location = new Point(btnX, 57);
+            btnEye.Location = new Point(btnX, 60);
             btnEye.Width = btnWidth;
         };
 
@@ -1063,9 +1170,10 @@ public sealed class MainForm : Form
             tUrl.BackColor = bgControl;
         tUrl.ForeColor = tUrl.ReadOnly ? textSec : textMain;
 
-        lKey.ForeColor = textMain;
-        tKey.BackColor = bgControl;
-        tKey.ForeColor = textMain;
+        lKey.ForeColor = textSec; // dimmed to hint it's locked
+        if (tKey.ReadOnly)
+            tKey.BackColor = bgControl;
+        tKey.ForeColor = tKey.ReadOnly ? textSec : textMain;
         bEye.BackColor = bgControl;
         bEye.ForeColor = textMain;
     }
@@ -1451,7 +1559,7 @@ public sealed class MainForm : Form
         }
         else
         {
-            btn.Text = "🔴 STREAM";
+            btn.Text = "● STREAM";
             btn.BackColor = Color.FromArgb(16, 185, 129);
         }
     }
