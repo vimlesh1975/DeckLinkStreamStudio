@@ -68,6 +68,7 @@ public sealed class MainForm : Form
     // Destination 1: Sahyadri Facebook
     private readonly Panel _pnlFb = new();
     private readonly Label _lblFbTitle = new();
+    private readonly TextBox _txtFbTitle = new();
     private readonly Label _lblFbUrl = new();
     private readonly TextBox _txtFbUrl = new();
     private readonly Button _btnStreamFb = new();
@@ -78,6 +79,7 @@ public sealed class MainForm : Form
     // Destination 2: Sahyadri YouTube
     private readonly Panel _pnlYt = new();
     private readonly Label _lblYtTitle = new();
+    private readonly TextBox _txtYtTitle = new();
     private readonly Label _lblYtUrl = new();
     private readonly TextBox _txtYtUrl = new();
     private readonly Button _btnStreamYt = new();
@@ -88,6 +90,7 @@ public sealed class MainForm : Form
     // Destination 3: Sahyadri YouTube News
     private readonly Panel _pnlYtNews = new();
     private readonly Label _lblYtNewsTitle = new();
+    private readonly TextBox _txtYtNewsTitle = new();
     private readonly Label _lblYtNewsUrl = new();
     private readonly TextBox _txtYtNewsUrl = new();
     private readonly Button _btnStreamYtNews = new();
@@ -144,9 +147,9 @@ public sealed class MainForm : Form
 
         _destRunners = new DestinationStreamRunner[3]
         {
-            new DestinationStreamRunner(0, "Sahyadri Facebook"),
-            new DestinationStreamRunner(1, "Sahyadri YouTube"),
-            new DestinationStreamRunner(2, "Sahyadri YouTube News")
+            new DestinationStreamRunner(0, _config.Destinations.Count > 0 && !string.IsNullOrWhiteSpace(_config.Destinations[0].Name) ? _config.Destinations[0].Name : "Sahyadri Facebook"),
+            new DestinationStreamRunner(1, _config.Destinations.Count > 1 && !string.IsNullOrWhiteSpace(_config.Destinations[1].Name) ? _config.Destinations[1].Name : "Sahyadri YouTube"),
+            new DestinationStreamRunner(2, _config.Destinations.Count > 2 && !string.IsNullOrWhiteSpace(_config.Destinations[2].Name) ? _config.Destinations[2].Name : "Sahyadri YouTube News")
         };
 
         for (int i = 0; i < _destRunners.Length; i++)
@@ -651,20 +654,20 @@ public sealed class MainForm : Form
         y += 24;
 
         // Destination 1: Sahyadri Facebook Card
-        BuildDestinationCard(_pnlFb, "Sahyadri Facebook", Color.FromArgb(59, 130, 246), 0, y,
-            _lblFbTitle, _lblFbUrl, _txtFbUrl, _btnStreamFb, _lblFbKey, _txtFbKey, _btnToggleFbKey);
+        BuildDestinationCard(_pnlFb, Color.FromArgb(59, 130, 246), 0, y,
+            _lblFbTitle, _txtFbTitle, _lblFbUrl, _txtFbUrl, _btnStreamFb, _lblFbKey, _txtFbKey, _btnToggleFbKey);
         _rightPanel.Controls.Add(_pnlFb);
         y += 94;
 
         // Destination 2: Sahyadri YouTube Card
-        BuildDestinationCard(_pnlYt, "Sahyadri YouTube", Color.FromArgb(239, 68, 68), 1, y,
-            _lblYtTitle, _lblYtUrl, _txtYtUrl, _btnStreamYt, _lblYtKey, _txtYtKey, _btnToggleYtKey);
+        BuildDestinationCard(_pnlYt, Color.FromArgb(239, 68, 68), 1, y,
+            _lblYtTitle, _txtYtTitle, _lblYtUrl, _txtYtUrl, _btnStreamYt, _lblYtKey, _txtYtKey, _btnToggleYtKey);
         _rightPanel.Controls.Add(_pnlYt);
         y += 94;
 
         // Destination 3: Sahyadri YouTube News Card
-        BuildDestinationCard(_pnlYtNews, "Sahyadri YouTube News", Color.FromArgb(245, 158, 11), 2, y,
-            _lblYtNewsTitle, _lblYtNewsUrl, _txtYtNewsUrl, _btnStreamYtNews, _lblYtNewsKey, _txtYtNewsKey, _btnToggleYtNewsKey);
+        BuildDestinationCard(_pnlYtNews, Color.FromArgb(245, 158, 11), 2, y,
+            _lblYtNewsTitle, _txtYtNewsTitle, _lblYtNewsUrl, _txtYtNewsUrl, _btnStreamYtNews, _lblYtNewsKey, _txtYtNewsKey, _btnToggleYtNewsKey);
         _rightPanel.Controls.Add(_pnlYtNews);
 
         _leftPanel.Resize += (s, e) => UpdateDestinationCardWidths();
@@ -679,8 +682,8 @@ public sealed class MainForm : Form
         _pnlYtNews.Width = availableWidth;
     }
 
-    private void BuildDestinationCard(Panel pnl, string name, Color accentColor, int destIndex, int y,
-        Label lblTitle, Label lblUrl, TextBox txtUrl, Button btnStream, Label lblKey, TextBox txtKey, Button btnEye)
+    private void BuildDestinationCard(Panel pnl, Color accentColor, int destIndex, int y,
+        Label lblTitle, TextBox txtTitle, Label lblUrl, TextBox txtUrl, Button btnStream, Label lblKey, TextBox txtKey, Button btnEye)
     {
         int initialWidth = Math.Max(280, _leftPanel.ClientSize.Width > 0 ? _leftPanel.ClientSize.Width - 12 : 690);
         pnl.Location = new Point(6, y);
@@ -696,17 +699,67 @@ public sealed class MainForm : Form
         };
         pnl.Controls.Add(accentStrip);
 
-        lblTitle.Text = name;
-        lblTitle.Font = new Font("Segoe UI", 9.5f, FontStyle.Bold);
+        // Stream Name Field - locked by default, double-click to unlock for editing
+        lblTitle.Text = "🔒 Stream:";
+        lblTitle.Font = new Font("Segoe UI", 8.5f, FontStyle.Bold);
         lblTitle.AutoSize = true;
-        lblTitle.Location = new Point(14, 5);
+        var titleToolTip = new ToolTip();
+        titleToolTip.SetToolTip(lblTitle, "Double-click to unlock and rename stream destination");
+        titleToolTip.SetToolTip(txtTitle, "Double-click to unlock and rename stream destination");
+
+        txtTitle.BorderStyle = BorderStyle.FixedSingle;
+        txtTitle.Font = new Font("Segoe UI", 9f, FontStyle.Bold);
+        txtTitle.ReadOnly = true;
+        txtTitle.Cursor = Cursors.Arrow;
+        txtTitle.Text = _config.Destinations[destIndex].Name;
+        txtTitle.Select(0, 0);
+        txtTitle.TextChanged += (s, e) =>
+        {
+            _config.Destinations[destIndex].Name = txtTitle.Text;
+            if (_destRunners != null && destIndex < _destRunners.Length && _destRunners[destIndex] != null)
+            {
+                _destRunners[destIndex].DestinationName = txtTitle.Text;
+            }
+            _settings.Save();
+        };
+
+        Action unlockTitleEdit = () =>
+        {
+            txtTitle.ReadOnly = false;
+            txtTitle.Cursor = Cursors.IBeam;
+            txtTitle.BackColor = _settings.DarkMode ? Color.FromArgb(55, 65, 85) : Color.FromArgb(255, 255, 240);
+            lblTitle.Text = "✏️ Stream:";
+            txtTitle.Focus();
+            txtTitle.SelectAll();
+        };
+
+        lblTitle.DoubleClick += (s, e) => unlockTitleEdit();
+        txtTitle.DoubleClick += (s, e) => unlockTitleEdit();
+
+        txtTitle.KeyDown += (s, e) =>
+        {
+            if (e.KeyCode == Keys.Enter || e.KeyCode == Keys.Escape)
+            {
+                pnl.Focus();
+                e.Handled = true;
+                e.SuppressKeyPress = true;
+            }
+        };
+
+        txtTitle.Leave += (s, e) =>
+        {
+            txtTitle.ReadOnly = true;
+            txtTitle.Cursor = Cursors.Arrow;
+            lblTitle.Text = "🔒 Stream:";
+            txtTitle.BackColor = _settings.DarkMode ? Color.FromArgb(42, 50, 68) : Color.FromArgb(241, 245, 249);
+        };
         pnl.Controls.Add(lblTitle);
+        pnl.Controls.Add(txtTitle);
 
         // URL Field - locked by default, double-click to unlock for editing
         lblUrl.Text = "🔒 URL:";
         lblUrl.Font = new Font("Segoe UI", 8.5f, FontStyle.Bold);
         lblUrl.AutoSize = true;
-        lblUrl.Location = new Point(10, 29);
         var urlToolTip = new ToolTip();
         urlToolTip.SetToolTip(lblUrl, "Double-click URL field to unlock for editing");
         urlToolTip.SetToolTip(txtUrl, "Double-click to unlock for editing");
@@ -715,10 +768,6 @@ public sealed class MainForm : Form
         txtUrl.Font = new Font("Segoe UI", 9f);
         txtUrl.ReadOnly = true;
         txtUrl.Cursor = Cursors.Arrow;
-        txtUrl.Location = new Point(72, 27);
-        // Width: from x=72 to just before STREAM button (right-anchored), leaving 12px gap
-        txtUrl.Width = Math.Max(80, pnl.ClientSize.Width - 72 - 90 - 12 - 14);
-        txtUrl.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
         txtUrl.Text = _config.Destinations[destIndex].ServerUrl;
         txtUrl.Select(0, 0);
         txtUrl.TextChanged += (s, e) =>
@@ -726,14 +775,30 @@ public sealed class MainForm : Form
             _config.Destinations[destIndex].ServerUrl = txtUrl.Text;
             _settings.Save();
         };
-        txtUrl.DoubleClick += (s, e) =>
+
+        Action unlockUrlEdit = () =>
         {
             txtUrl.ReadOnly = false;
             txtUrl.Cursor = Cursors.IBeam;
             txtUrl.BackColor = _settings.DarkMode ? Color.FromArgb(55, 65, 85) : Color.FromArgb(255, 255, 240);
             lblUrl.Text = "✏️ URL:";
+            txtUrl.Focus();
             txtUrl.SelectAll();
         };
+
+        lblUrl.DoubleClick += (s, e) => unlockUrlEdit();
+        txtUrl.DoubleClick += (s, e) => unlockUrlEdit();
+
+        txtUrl.KeyDown += (s, e) =>
+        {
+            if (e.KeyCode == Keys.Enter || e.KeyCode == Keys.Escape)
+            {
+                pnl.Focus();
+                e.Handled = true;
+                e.SuppressKeyPress = true;
+            }
+        };
+
         txtUrl.Leave += (s, e) =>
         {
             txtUrl.ReadOnly = true;
@@ -751,10 +816,8 @@ public sealed class MainForm : Form
         btnStream.ForeColor = Color.White;
         btnStream.FlatStyle = FlatStyle.Flat;
         btnStream.FlatAppearance.BorderSize = 0;
-        btnStream.Width = 90;
+        btnStream.Padding = Padding.Empty;
         btnStream.Height = 25;
-        btnStream.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-        btnStream.Location = new Point(pnl.ClientSize.Width - 14 - 90, 26);
         btnStream.Click += (s, e) => ToggleDestinationStream(destIndex);
         pnl.Controls.Add(btnStream);
 
@@ -762,15 +825,10 @@ public sealed class MainForm : Form
         lblKey.Text = "Key:";
         lblKey.Font = new Font("Segoe UI", 8.5f, FontStyle.Bold);
         lblKey.AutoSize = true;
-        lblKey.Location = new Point(10, 57);
 
         txtKey.BorderStyle = BorderStyle.FixedSingle;
         txtKey.Font = new Font("Segoe UI", 9f);
         txtKey.UseSystemPasswordChar = true;
-        txtKey.Location = new Point(52, 55);
-        // Width: from x=52 to just before eye button (right-anchored), leaving 12px gap
-        txtKey.Width = Math.Max(60, pnl.ClientSize.Width - 52 - 36 - 12 - 14);
-        txtKey.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
         txtKey.Text = _config.Destinations[destIndex].StreamKey;
         txtKey.Select(0, 0);
         txtKey.TextChanged += (s, e) =>
@@ -783,10 +841,8 @@ public sealed class MainForm : Form
         btnEye.Font = new Font("Segoe UI", 9f);
         btnEye.FlatStyle = FlatStyle.Flat;
         btnEye.FlatAppearance.BorderSize = 0;
-        btnEye.Width = 36;
+        btnEye.Padding = Padding.Empty;
         btnEye.Height = 24;
-        btnEye.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-        btnEye.Location = new Point(pnl.ClientSize.Width - 14 - 36, 54);
         btnEye.Click += (s, e) =>
         {
             txtKey.UseSystemPasswordChar = !txtKey.UseSystemPasswordChar;
@@ -795,6 +851,44 @@ public sealed class MainForm : Form
         pnl.Controls.Add(lblKey);
         pnl.Controls.Add(txtKey);
         pnl.Controls.Add(btnEye);
+
+        // Responsive layout: 75% width for value boxes, horizontal alignment, and left margin
+        const int leftMargin = 14;
+        const int boxX = 82;
+
+        Action layoutCard = () =>
+        {
+            int w = pnl.ClientSize.Width;
+            if (w <= 0) return;
+
+            int boxWidth = Math.Max(80, (int)(w * 0.75));
+            int btnX = boxX + boxWidth + 6;
+            int btnWidth = Math.Max(36, w - 6 - btnX);
+
+            // Row 1: Stream Name
+            lblTitle.Location = new Point(leftMargin, 8);
+            txtTitle.Location = new Point(boxX, 5);
+            txtTitle.Width = boxWidth;
+
+            // Row 2: URL + STREAM button
+            lblUrl.Location = new Point(leftMargin, 34);
+            txtUrl.Location = new Point(boxX, 31);
+            txtUrl.Width = boxWidth;
+
+            btnStream.Location = new Point(btnX, 30);
+            btnStream.Width = btnWidth;
+
+            // Row 3: Key + Eye button
+            lblKey.Location = new Point(leftMargin, 61);
+            txtKey.Location = new Point(boxX, 58);
+            txtKey.Width = boxWidth;
+
+            btnEye.Location = new Point(btnX, 57);
+            btnEye.Width = btnWidth;
+        };
+
+        pnl.Resize += (s, e) => layoutCard();
+        layoutCard();
     }
 
     private void InitializeLogConsole()
@@ -940,9 +1034,9 @@ public sealed class MainForm : Form
         _lblKbps.ForeColor = textSec;
 
         // Destination Cards
-        ApplyCardTheme(_pnlFb, _lblFbTitle, _lblFbUrl, _txtFbUrl, _lblFbKey, _txtFbKey, _btnToggleFbKey, bgCard, bgControl, textMain, textSec);
-        ApplyCardTheme(_pnlYt, _lblYtTitle, _lblYtUrl, _txtYtUrl, _lblYtKey, _txtYtKey, _btnToggleYtKey, bgCard, bgControl, textMain, textSec);
-        ApplyCardTheme(_pnlYtNews, _lblYtNewsTitle, _lblYtNewsUrl, _txtYtNewsUrl, _lblYtNewsKey, _txtYtNewsKey, _btnToggleYtNewsKey, bgCard, bgControl, textMain, textSec);
+        ApplyCardTheme(_pnlFb, _lblFbTitle, _txtFbTitle, _lblFbUrl, _txtFbUrl, _lblFbKey, _txtFbKey, _btnToggleFbKey, bgCard, bgControl, textMain, textSec);
+        ApplyCardTheme(_pnlYt, _lblYtTitle, _txtYtTitle, _lblYtUrl, _txtYtUrl, _lblYtKey, _txtYtKey, _btnToggleYtKey, bgCard, bgControl, textMain, textSec);
+        ApplyCardTheme(_pnlYtNews, _lblYtNewsTitle, _txtYtNewsTitle, _lblYtNewsUrl, _txtYtNewsUrl, _lblYtNewsKey, _txtYtNewsKey, _btnToggleYtNewsKey, bgCard, bgControl, textMain, textSec);
 
         // Log Console
         _logPanel.BackColor = isDark ? Color.FromArgb(12, 14, 18) : Color.FromArgb(241, 245, 249);
@@ -954,16 +1048,21 @@ public sealed class MainForm : Form
         _logTextBox.ForeColor = isDark ? Color.FromArgb(203, 213, 225) : Color.FromArgb(15, 23, 42);
     }
 
-    private void ApplyCardTheme(Panel pnl, Label lblTitle, Label lUrl, TextBox tUrl, Label lKey, TextBox tKey, Button bEye,
+    private void ApplyCardTheme(Panel pnl, Label lblTitle, TextBox txtTitle, Label lUrl, TextBox tUrl, Label lKey, TextBox tKey, Button bEye,
         Color bgCard, Color bgControl, Color textMain, Color textSec)
     {
         pnl.BackColor = bgCard;
-        lblTitle.ForeColor = textMain;
+        lblTitle.ForeColor = textSec;
+        if (txtTitle.ReadOnly)
+            txtTitle.BackColor = bgControl;
+        txtTitle.ForeColor = textMain;
+
         lUrl.ForeColor = textSec; // dimmed to hint it's locked
         // Only re-apply background if still read-only (don't override active-edit colour)
         if (tUrl.ReadOnly)
             tUrl.BackColor = bgControl;
         tUrl.ForeColor = tUrl.ReadOnly ? textSec : textMain;
+
         lKey.ForeColor = textMain;
         tKey.BackColor = bgControl;
         tKey.ForeColor = textMain;
@@ -1480,6 +1579,25 @@ public sealed class MainForm : Form
         _bitrateUpDown.Value = _config.VideoBitrateKbps;
         _chkDeinterlace.Checked = _config.Deinterlace;
         _delayUpDown.Value = _config.AudioDelayMs;
+
+        if (_config.Destinations.Count > 0)
+        {
+            _txtFbTitle.Text = _config.Destinations[0].Name;
+            _txtFbUrl.Text = _config.Destinations[0].ServerUrl;
+            _txtFbKey.Text = _config.Destinations[0].StreamKey;
+        }
+        if (_config.Destinations.Count > 1)
+        {
+            _txtYtTitle.Text = _config.Destinations[1].Name;
+            _txtYtUrl.Text = _config.Destinations[1].ServerUrl;
+            _txtYtKey.Text = _config.Destinations[1].StreamKey;
+        }
+        if (_config.Destinations.Count > 2)
+        {
+            _txtYtNewsTitle.Text = _config.Destinations[2].Name;
+            _txtYtNewsUrl.Text = _config.Destinations[2].ServerUrl;
+            _txtYtNewsKey.Text = _config.Destinations[2].StreamKey;
+        }
 
         _encoderCombo.SelectedIndex = _config.VideoEncoder switch
         {

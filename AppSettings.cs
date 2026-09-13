@@ -69,6 +69,34 @@ public sealed class AppSettings
                 new() { Id = "yt_news", Name = "Sahyadri YouTube News", Enabled = true, ServerUrl = "rtmp://a.rtmp.youtube.com/live2", StreamKey = "" }
             };
         }
+        else
+        {
+            var defaultNames = new[] { "Sahyadri Facebook", "Sahyadri YouTube", "Sahyadri YouTube News" };
+            var defaultUrls = new[] { "rtmps://live-api-s.facebook.com:443/rtmp/", "rtmp://a.rtmp.youtube.com/live2", "rtmp://a.rtmp.youtube.com/live2" };
+            var defaultIds = new[] { "fb", "yt_main", "yt_news" };
+
+            for (int i = 0; i < 3; i++)
+            {
+                if (i < config.Destinations.Count)
+                {
+                    if (string.IsNullOrWhiteSpace(config.Destinations[i].Name))
+                    {
+                        config.Destinations[i].Name = defaultNames[i];
+                    }
+                }
+                else
+                {
+                    config.Destinations.Add(new DestinationConfig
+                    {
+                        Id = defaultIds[i],
+                        Name = defaultNames[i],
+                        Enabled = false,
+                        ServerUrl = defaultUrls[i],
+                        StreamKey = ""
+                    });
+                }
+            }
+        }
     }
 
     public void Save()

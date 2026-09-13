@@ -25,7 +25,7 @@ public sealed class DestinationStreamRunner : IDisposable
     private DestinationConfig? _currentDest;
 
     public int DestinationIndex { get; }
-    public string DestinationName { get; }
+    public string DestinationName { get; set; }
 
     public bool IsRunning
     {
@@ -55,6 +55,11 @@ public sealed class DestinationStreamRunner : IDisposable
     {
         lock (_syncRoot)
         {
+            if (!string.IsNullOrWhiteSpace(dest.Name))
+            {
+                DestinationName = dest.Name;
+            }
+
             if (IsRunning)
             {
                 Stop();
