@@ -1,4 +1,4 @@
-# Channel DeckLink Broadcaster (.NET 10 x64 Release)
+# Channel DeckLink Streamer (.NET 10 x64 Release)
 
 ![Application Screenshot](image.png)
 
@@ -52,7 +52,7 @@ High-performance broadcast streaming desktop application for Windows x64. Ingest
 
 ---
 
-## 🚀 Running the Broadcaster
+## 🚀 Running the Streamer
 
 Launch the generated Release executable:
 ```powershell
