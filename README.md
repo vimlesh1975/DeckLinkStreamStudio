@@ -1,11 +1,11 @@
-# Sahyadri DeckLink Broadcaster (.NET 10 x64 Release)
+# Channel DeckLink Broadcaster (.NET 10 x64 Release)
 
 ![Application Screenshot](image.png)
 
 High-performance broadcast streaming desktop application for Windows x64. Ingests a **single Blackmagic DeckLink SDI/HDMI source** and broadcasts simultaneously to **3 destinations**:
-1. **Sahyadri Facebook**
-2. **Sahyadri YouTube**
-3. **Sahyadri YouTube News**
+1. **Channel Facebook**
+2. **Channel YouTube**
+3. **Channel YouTube News**
 
 ![Platform](https://img.shields.io/badge/platform-Windows%20x64-blue)
 ![Framework](https://img.shields.io/badge/.NET-10.0--windows%20(x64%20Release)-purple)
@@ -25,9 +25,9 @@ High-performance broadcast streaming desktop application for Windows x64. Ingest
   - Audio Listen: route SDI audio to PC headphones/speakers for operator monitoring.
 
 - **3 Simultaneous Streaming Destinations**:
-  - **Sahyadri Facebook**: `rtmps://live-api-s.facebook.com:443/rtmp/`
-  - **Sahyadri YouTube**: `rtmp://a.rtmp.youtube.com/live2`
-  - **Sahyadri YouTube News**: `rtmp://a.rtmp.youtube.com/live2`
+  - **Channel Facebook**: `rtmps://live-api-s.facebook.com:443/rtmp/`
+  - **Channel YouTube**: `rtmp://a.rtmp.youtube.com/live2`
+  - **Channel YouTube News**: `rtmp://a.rtmp.youtube.com/live2`
   - Encodes video **only once** on the GPU/CPU and distributes to all 3 endpoints via high-throughput FLV tee muxer with `[onfail=ignore]` fault isolation.
   - Individual enable/disable checkboxes and masked Stream Keys with eye reveal toggle.
 
@@ -48,15 +48,15 @@ High-performance broadcast streaming desktop application for Windows x64. Ingest
   - No settings files are written to or maintained within the project directory.
 
 - **Strict 64-Bit Release Build**:
-  - Built exclusively for 64-bit Windows in Release mode (`bin\Release\net10.0-windows\win-x64\DeckLinkStreamStudio.exe`).
+  - Built exclusively for 64-bit Windows in Release mode (`bin\Release\net10.0-windows\win-x64\DeckLinkStreamStudio_*.exe`).
 
 ---
 
 ## 🚀 Running the Broadcaster
 
-Double-click `run.bat` or launch directly:
+Launch the generated Release executable:
 ```powershell
-.\bin\Release\net10.0-windows\win-x64\DeckLinkStreamStudio.exe
+.\bin\Release\net10.0-windows\win-x64\DeckLinkStreamStudio_*.exe
 ```
 
 To re-compile the 64-bit Release binary:
