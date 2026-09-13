@@ -713,7 +713,7 @@ public sealed class MainForm : Form
 
         int y = 2;
 
-        _lblDestTitle.Text = "3 BROADCAST DESTINATIONS";
+        _lblDestTitle.Text = "3 STREAMING DESTINATIONS";
         _lblDestTitle.Font = new Font("Segoe UI", 9.5f, FontStyle.Bold);
         _lblDestTitle.ForeColor = Color.FromArgb(56, 189, 248);
         _lblDestTitle.AutoSize = true;
