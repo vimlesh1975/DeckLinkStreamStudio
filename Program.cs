@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows.Forms;
 using DeckLinkStreamStudio.Forms;
@@ -12,9 +13,23 @@ internal static class Program
 {
     private static Mutex? _singleInstanceMutex;
 
+    [DllImport("kernel32.dll")]
+    private static extern bool AttachConsole(int dwProcessId);
+
     [STAThread]
-    private static void Main()
+    private static void Main(string[] args)
     {
+        if (args.Length > 0 && (args[0] == "--list-devices" || args[0] == "-l"))
+        {
+            AttachConsole(-1);
+            var devList = DeckLinkStreamStudio.Engines.DeckLinkEnumerator.GetInstalledDevices(forceRefresh: true);
+            foreach (var d in devList)
+            {
+                Console.WriteLine($"[DEVICE] Name='{d.Name}' | DeviceId='{d.DeviceId}' | Audio='{d.DshowAudioName}'");
+            }
+            return;
+        }
+
         bool isOnlyInstance = false;
         try
         {

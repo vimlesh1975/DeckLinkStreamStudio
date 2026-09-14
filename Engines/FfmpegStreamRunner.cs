@@ -423,7 +423,8 @@ public sealed class FfmpegStreamRunner : IDisposable
         sb.Append("-signal_loss_action bars ");
         sb.Append("-audio_depth 16 ");
         sb.Append($"-channels {Math.Max(2, config.AudioChannels)} ");
-        sb.Append($"-i \"{config.DeckLinkDevice}\" ");
+        var inputTarget = DeckLinkEnumerator.ResolveInputTarget(config.DeckLinkDevice);
+        sb.Append($"-i \"{inputTarget}\" ");
     }
 
     private string BuildPreviewFilterGraph(StreamConfig config, int fps)

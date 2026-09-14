@@ -139,7 +139,11 @@ public sealed class AudioMonitorRunner : IDisposable
                     // DeckLink hardware cards expose shared DirectShow audio capture endpoints.
                     // This allows listening to the SDI embedded audio without interfering with the
                     // main FFmpeg DeckLink video/audio hardware capture lock.
-                    var dshowAudio = ResolveDirectShowAudioDevice(decklinkDevice);
+                    var dshowAudio = DeckLinkEnumerator.ResolveAudioTarget(decklinkDevice);
+                    if (string.IsNullOrWhiteSpace(dshowAudio))
+                    {
+                        dshowAudio = ResolveDirectShowAudioDevice(decklinkDevice);
+                    }
                     var ffplayPath = FfmpegStreamRunner.ResolveFfmpegPath().Replace("ffmpeg.exe", "ffplay.exe");
                     if (!File.Exists(ffplayPath))
                     {

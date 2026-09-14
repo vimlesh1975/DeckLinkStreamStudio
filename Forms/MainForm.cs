@@ -323,7 +323,7 @@ public sealed class MainForm : Form
         _deviceComboBox.FlatStyle = FlatStyle.Flat;
         _deviceComboBox.Font = new Font("Segoe UI", 8.5f);
         _deviceComboBox.Width = 115;
-        _deviceComboBox.DropDownWidth = 180;
+        _deviceComboBox.DropDownWidth = 240;
         _deviceComboBox.Location = new Point(54, 8);
 
         foreach (var d in _devices) _deviceComboBox.Items.Add(d.Name);
@@ -335,6 +335,13 @@ public sealed class MainForm : Form
                 var itemStr = _deviceComboBox.Items[i]?.ToString() ?? "";
                 if (itemStr.Contains("go1080p25", StringComparison.OrdinalIgnoreCase) &&
                     _config.DeckLinkDevice.Contains("go1080p25", StringComparison.OrdinalIgnoreCase))
+                {
+                    devIdx = i;
+                    break;
+                }
+                if (!string.IsNullOrWhiteSpace(_config.DeckLinkDevice) &&
+                    (itemStr.EndsWith(_config.DeckLinkDevice, StringComparison.OrdinalIgnoreCase) ||
+                     itemStr.Contains(_config.DeckLinkDevice, StringComparison.OrdinalIgnoreCase)))
                 {
                     devIdx = i;
                     break;
