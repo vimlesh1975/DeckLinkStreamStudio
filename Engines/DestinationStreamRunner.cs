@@ -87,7 +87,8 @@ public sealed class DestinationStreamRunner : IDisposable
         int clientPort = TcpBroadcastHub.BaseClientPort + DestinationIndex;
         sb.Append($"-i tcp://127.0.0.1:{clientPort} ");
 
-        sb.Append($"-c copy -avoid_negative_ts make_zero -max_muxing_queue_size 4096 -f flv \"{dest.FullUrl}\"");
+        var audioBitrate = Math.Max(128, config.AudioBitrateKbps);
+        sb.Append($"-c:v copy -c:a aac -b:a {audioBitrate}k -ar 48000 -ac 2 -af \"aresample=async=1\" -avoid_negative_ts make_zero -max_muxing_queue_size 4096 -f flv \"{dest.FullUrl}\"");
         return sb.ToString();
     }
 

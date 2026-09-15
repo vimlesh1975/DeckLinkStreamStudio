@@ -424,14 +424,14 @@ public sealed class FfmpegStreamRunner : IDisposable
     {
         var sb = new StringBuilder();
 
-        // Audio processing chain with clock-drift correction (async=1000) and optional sync delay
+        // Audio processing chain with clock-drift correction (async=1) and optional sync delay
         if (config.AudioDelayMs > 0)
         {
-            sb.Append($"[0:a]aresample=48000:async=1000,adelay={config.AudioDelayMs}|{config.AudioDelayMs},asplit=2[a_stream][a_for_meter];");
+            sb.Append($"[0:a]aresample=48000:async=1,adelay={config.AudioDelayMs}|{config.AudioDelayMs},asplit=2[a_stream][a_for_meter];");
         }
         else
         {
-            sb.Append("[0:a]aresample=48000:async=1000,asplit=2[a_stream][a_for_meter];");
+            sb.Append("[0:a]aresample=48000:async=1,asplit=2[a_stream][a_for_meter];");
         }
 
         if (dualEncoding)
