@@ -32,16 +32,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Update="Interop\DeckLinkAPI.Interop.dll">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Include="tools\ffmpeg.exe" Link="ffmpeg.exe">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Include="tools\ffplay.exe" Link="ffplay.exe">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Include="tools\ffprobe.exe" Link="ffprobe.exe">
+    <None Include="Interop\DeckLinkAPI.Interop.dll" Link="DeckLinkAPI.Interop.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
     <None Include="go1080p25.mp4">

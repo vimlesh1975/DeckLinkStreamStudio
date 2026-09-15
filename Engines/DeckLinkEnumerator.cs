@@ -245,7 +245,7 @@ public static class DeckLinkEnumerator
                     ? $"Card {cardNumber} - {item.name}"
                     : item.name;
 
-                string dshowAudio = FindDirectShowAudio(dshowAudioList, cardNumber, channelNumber);
+                string dshowAudio = FindDirectShowAudio(dshowAudioList, cardNumber, channelNumber, item.name);
 
                 result.Add(new DeckLinkDeviceEntry(friendlyName, item.id, item.name, dshowAudio));
             }
@@ -274,10 +274,21 @@ public static class DeckLinkEnumerator
         return fallback;
     }
 
-    private static string FindDirectShowAudio(List<string> dshowList, int cardNumber, int channelNumber)
+    private static string FindDirectShowAudio(List<string> dshowList, int cardNumber, int channelNumber, string cardModelName = "")
     {
         if (dshowList == null || dshowList.Count == 0) return "";
 
+        // 1. Direct keyword match using the card model name — most reliable.
+        //    e.g. "DeckLink SDI 4K" → "Line In (Blackmagic DeckLink SDI 4K Audio)"
+        //         "DeckLink Duo 2 (1)" → "Line In (Blackmagic DeckLink Duo 2 (1) Audio)"
+        if (!string.IsNullOrWhiteSpace(cardModelName))
+        {
+            var nameMatch = dshowList.FirstOrDefault(d =>
+                d.Contains(cardModelName, StringComparison.OrdinalIgnoreCase));
+            if (nameMatch != null) return nameMatch;
+        }
+
+        // 2. Position-based fallback for multi-card/multi-channel scenarios
         string chPattern = $"({channelNumber})";
 
         if (cardNumber == 1)

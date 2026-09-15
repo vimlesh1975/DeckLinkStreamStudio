@@ -87,7 +87,7 @@ public sealed class DestinationStreamRunner : IDisposable
         int clientPort = TcpBroadcastHub.BaseClientPort + DestinationIndex;
         sb.Append($"-i tcp://127.0.0.1:{clientPort} ");
 
-        sb.Append($"-c copy -max_muxing_queue_size 4096 -f flv \"{dest.FullUrl}\"");
+        sb.Append($"-c copy -avoid_negative_ts make_zero -max_muxing_queue_size 4096 -f flv \"{dest.FullUrl}\"");
         return sb.ToString();
     }
 

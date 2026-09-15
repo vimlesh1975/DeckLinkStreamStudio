@@ -202,6 +202,8 @@ public sealed class MainForm : Form
             r.OnLog += msg => AppendLog(msg);
         }
 
+        _audioMonitor.OnLog += msg => AppendLog(msg);
+
         InitializeForm();
         InitializeTopHeader();
         InitializeWorkspace();

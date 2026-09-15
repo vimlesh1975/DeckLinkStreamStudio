@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 
@@ -15,6 +16,9 @@ public sealed class AudioMonitorRunner : IDisposable
     private readonly object _syncRoot = new();
     private static List<string>? _cachedDshowAudioDevices;
     private static readonly object _dshowLock = new();
+
+    /// <summary>Raised on the thread-pool with diagnostic and error messages from the listen process.</summary>
+    public event Action<string>? OnLog;
 
     public bool IsMonitoring
     {
@@ -53,7 +57,8 @@ public sealed class AudioMonitorRunner : IDisposable
                     string output = proc.StandardError.ReadToEnd();
                     proc.WaitForExit(1500);
 
-                    var matches = Regex.Matches(output, "\"([^\"]+)\"\\s*\\(audio");
+                    // Match only pure audio devices: ends with (audio) not (audio, video)
+                    var matches = Regex.Matches(output, "\"([^\"]+)\"\\s*\\(audio\\)");
                     foreach (Match m in matches)
                     {
                         if (m.Success && m.Groups.Count > 1)
@@ -145,22 +150,41 @@ public sealed class AudioMonitorRunner : IDisposable
                         dshowAudio = ResolveDirectShowAudioDevice(decklinkDevice);
                     }
                     var ffplayPath = FfmpegStreamRunner.ResolveFfmpegPath().Replace("ffmpeg.exe", "ffplay.exe");
-                    if (!File.Exists(ffplayPath))
+                    bool ffplayMissing = !File.Exists(ffplayPath);
+                    if (ffplayMissing)
                     {
-                        ffplayPath = "ffplay.exe";
+                        ffplayPath = "ffplay.exe"; // last-resort: hope it is on PATH
                     }
 
-                    var arguments = $"-hide_banner -loglevel error -nostats -nodisp -f dshow -i \"audio={dshowAudio}\"";
+                    OnLog?.Invoke($"[LISTEN] ffplay path: {ffplayPath}{(ffplayMissing ? " (WARNING: file not found at resolved path — trying PATH)" : "")}");
+                    OnLog?.Invoke($"[LISTEN] DirectShow audio device: \"{dshowAudio}\"");
+
+                    // Use verbose loglevel so device-open errors are captured in stderr
+                    var arguments = $"-hide_banner -loglevel verbose -nostats -nodisp -f dshow -i \"audio={dshowAudio}\"";
+                    var errorOutput = new StringBuilder();
                     var psi = new ProcessStartInfo
                     {
                         FileName = ffplayPath,
                         Arguments = arguments,
                         UseShellExecute = false,
-                        CreateNoWindow = true
+                        CreateNoWindow = true,
+                        RedirectStandardError = true
                     };
 
                     _process = Process.Start(psi);
-                    if (_process == null) return false;
+                    if (_process == null)
+                    {
+                        OnLog?.Invoke("[LISTEN ERROR] Failed to start ffplay process (Process.Start returned null).");
+                        return false;
+                    }
+
+                    // Capture stderr asynchronously so it doesn't block the read pipe
+                    _process.ErrorDataReceived += (_, e) =>
+                    {
+                        if (!string.IsNullOrEmpty(e.Data))
+                            errorOutput.AppendLine(e.Data);
+                    };
+                    _process.BeginErrorReadLine();
 
                     try
                     {
@@ -168,9 +192,31 @@ public sealed class AudioMonitorRunner : IDisposable
                     }
                     catch { }
 
-                    // Brief pause to verify process didn't immediately fail on device open
-                    Thread.Sleep(300);
-                    return !_process.HasExited;
+                    // Wait a bit longer (500 ms) to give ffplay time to open the device
+                    Thread.Sleep(500);
+
+                    if (_process.HasExited)
+                    {
+                        var err = errorOutput.ToString().Trim();
+                        OnLog?.Invoke($"[LISTEN ERROR] ffplay exited immediately (code {_process.ExitCode}).");
+                        if (!string.IsNullOrWhiteSpace(err))
+                        {
+                            foreach (var line in err.Split('\n'))
+                            {
+                                var trimmed = line.Trim('\r', '\n', ' ');
+                                if (!string.IsNullOrWhiteSpace(trimmed))
+                                    OnLog?.Invoke($"[LISTEN] ffplay: {trimmed}");
+                            }
+                        }
+                        else
+                        {
+                            OnLog?.Invoke("[LISTEN] ffplay produced no error output — check that ffplay.exe is a full build and the device name is correct.");
+                        }
+                        return false;
+                    }
+
+                    OnLog?.Invoke($"[LISTEN] ffplay running (PID {_process.Id})");
+                    return true;
                 }
             }
             catch

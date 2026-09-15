@@ -63,35 +63,18 @@ public sealed class FfmpegStreamRunner : IDisposable
         if (!string.IsNullOrWhiteSpace(customPath) && File.Exists(customPath))
             return customPath;
 
+        // Primary: ffmpeg.exe lives alongside the application executable
         var baseDir = AppDomain.CurrentDomain.BaseDirectory;
         var localExe = Path.Combine(baseDir, "ffmpeg.exe");
         if (File.Exists(localExe))
             return localExe;
 
-        var localToolsExe = Path.Combine(baseDir, "tools", "ffmpeg.exe");
-        if (File.Exists(localToolsExe))
-            return localToolsExe;
+        // Secondary: current working directory
+        var curExe = Path.Combine(Directory.GetCurrentDirectory(), "ffmpeg.exe");
+        if (File.Exists(curExe))
+            return curExe;
 
-        var curToolsExe = Path.Combine(Directory.GetCurrentDirectory(), "tools", "ffmpeg.exe");
-        if (File.Exists(curToolsExe))
-            return curToolsExe;
-
-        var newpToolsExe = @"d:\___newp\DeckLinkStreamStudio\tools\ffmpeg.exe";
-        if (File.Exists(newpToolsExe))
-            return newpToolsExe;
-
-        var toolsExe = @"d:\_projects\streaming\tools\ffmpeg.exe";
-        if (File.Exists(toolsExe))
-            return toolsExe;
-
-        var recorderExe = @"D:\_projects\FfmpegRecorder\bin\Debug\net10.0-windows\ffmpeg.exe";
-        if (File.Exists(recorderExe))
-            return recorderExe;
-
-        var srtExe = @"D:\_projects\SrtSuite\bin\Release\net10.0-windows\win-x64\ffmpeg.exe";
-        if (File.Exists(srtExe))
-            return srtExe;
-
+        // Last resort: hope it is on PATH
         return "ffmpeg.exe";
     }
 
@@ -374,7 +357,7 @@ public sealed class FfmpegStreamRunner : IDisposable
             var hevcVideoCodecArgs = GetVideoCodecArgs(VideoEncoderType.HEVC_NVENC, config.VideoBitrateKbps, gopSize);
             var nonFbTargets = nonFbDests.Select(d => $"[f=fifo:fifo_format=flv:drop_pkts_on_overflow=1:attempt_recovery=1:recovery_wait_time=1:max_recovery_attempts=5]{d.FullUrl}").ToList();
             var nonFbChain = string.Join("|", nonFbTargets);
-            sb.Append($"-map \"[v_stream_hevc]\" -map \"[a_stream_hevc]\" {hevcVideoCodecArgs} {audioCodecArgs} -max_muxing_queue_size 4096 -f tee \"{nonFbChain}\" ");
+            sb.Append($"-map \"[v_stream_hevc]\" -map \"[a_stream_hevc]\" {hevcVideoCodecArgs} {audioCodecArgs} -avoid_negative_ts make_zero -max_muxing_queue_size 4096 -f tee \"{nonFbChain}\" ");
 
             // Output 2: Facebook destinations encoded with H.264 (thread-isolated via fifo pseudo-muxer)
             var h264VideoCodecArgs = GetVideoCodecArgs(VideoEncoderType.LibX264, Math.Min(config.VideoBitrateKbps, 6000), gopSize);
@@ -441,14 +424,14 @@ public sealed class FfmpegStreamRunner : IDisposable
     {
         var sb = new StringBuilder();
 
-        // Audio processing chain with optional sync delay
+        // Audio processing chain with clock-drift correction (async=1000) and optional sync delay
         if (config.AudioDelayMs > 0)
         {
-            sb.Append($"[0:a]aresample=48000,adelay={config.AudioDelayMs}|{config.AudioDelayMs},asplit=2[a_stream][a_for_meter];");
+            sb.Append($"[0:a]aresample=48000:async=1000,adelay={config.AudioDelayMs}|{config.AudioDelayMs},asplit=2[a_stream][a_for_meter];");
         }
         else
         {
-            sb.Append("[0:a]aresample=48000,asplit=2[a_stream][a_for_meter];");
+            sb.Append("[0:a]aresample=48000:async=1000,asplit=2[a_stream][a_for_meter];");
         }
 
         if (dualEncoding)
