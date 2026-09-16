@@ -214,10 +214,10 @@ public sealed class FfmpegStreamRunner : IDisposable
 
         return encoder switch
         {
-            VideoEncoderType.HEVC_NVENC => $"-c:v hevc_nvenc -preset p4 -tune ll -delay 0 -g {gopSize} -bf 0 -b:v {videoBitrate} -maxrate {maxRate} -bufsize {bufSize} -pix_fmt yuv420p",
-            VideoEncoderType.H264_NVENC => $"-c:v h264_nvenc -preset p4 -tune ll -delay 0 -g {gopSize} -bf 0 -b:v {videoBitrate} -maxrate {maxRate} -bufsize {bufSize} -pix_fmt yuv420p",
-            VideoEncoderType.H264_AMF => $"-c:v h264_amf -quality speed -rc cbr -g {gopSize} -forced_idr 1 -b:v {videoBitrate} -maxrate {maxRate} -bufsize {bufSize} -pix_fmt yuv420p",
-            _ => $"-c:v libx264 -preset veryfast -tune zerolatency -g {gopSize} -bf 0 -b:v {videoBitrate} -maxrate {maxRate} -bufsize {bufSize} -pix_fmt yuv420p"
+            VideoEncoderType.HEVC_NVENC => $"-c:v hevc_nvenc -preset p4 -tune ll -delay 0 -g {gopSize} -forced-idr 1 -bf 0 -b:v {videoBitrate} -maxrate {maxRate} -bufsize {bufSize} -pix_fmt yuv420p",
+            VideoEncoderType.H264_NVENC => $"-c:v h264_nvenc -preset p4 -tune ll -delay 0 -g {gopSize} -forced-idr 1 -bf 0 -b:v {videoBitrate} -maxrate {maxRate} -bufsize {bufSize} -pix_fmt yuv420p",
+            VideoEncoderType.H264_AMF => $"-c:v h264_amf -quality speed -rc cbr -g {gopSize} -forced_idr 1 -header_spacing {gopSize} -b:v {videoBitrate} -maxrate {maxRate} -bufsize {bufSize} -pix_fmt yuv420p",
+            _ => $"-c:v libx264 -preset veryfast -tune zerolatency -g {gopSize} -bf 0 -x264opts repeat-headers=1 -b:v {videoBitrate} -maxrate {maxRate} -bufsize {bufSize} -pix_fmt yuv420p"
         };
     }
 
@@ -306,12 +306,7 @@ public sealed class FfmpegStreamRunner : IDisposable
         var videoCodecArgs = GetVideoCodecArgs(config.VideoEncoder, config.VideoBitrateKbps, gopSize);
         var audioBitrate = $"{config.AudioBitrateKbps}k";
         var audioCodecArgs = $"-c:a aac -b:a {audioBitrate} -ar 48000 -ac 2";
-
-        string repeatOpts = (config.VideoEncoder == VideoEncoderType.LibX264 || config.VideoEncoder == VideoEncoderType.Auto)
-            ? " -x264opts repeat-headers=1 "
-            : (config.VideoEncoder == VideoEncoderType.H264_NVENC ? " -forced-idr 1 " : " ");
-
-        sb.Append($"-map \"[v_stream]\" -map \"[a_stream]\" {videoCodecArgs}{repeatOpts}{audioCodecArgs} -f mpegts tcp://127.0.0.1:{TcpBroadcastHub.MasterPort} ");
+        sb.Append($"-map \"[v_stream]\" -map \"[a_stream]\" {videoCodecArgs} {audioCodecArgs} -f mpegts tcp://127.0.0.1:{TcpBroadcastHub.MasterPort} ");
 
         // In-app video preview + VU meters via stdout pipe
         sb.Append("-map \"[tx_preview]\" -f rawvideo -pix_fmt bgr24 pipe:1");

@@ -48,7 +48,7 @@ public sealed class StreamConfig
 
     // Video Encoding
     public VideoEncoderType VideoEncoder { get; set; } = VideoEncoderType.LibX264;
-    public int VideoBitrateKbps { get; set; } = 5000;
+    public int VideoBitrateKbps { get; set; } = 6800;
     public int KeyframeIntervalSeconds { get; set; } = 2;
     public string OutputResolution { get; set; } = "1920x1080"; // 1920x1080, 1280x720, Original
     public int TargetFps { get; set; } = 0; // 0 = source fps, 25, 30, 50, 60

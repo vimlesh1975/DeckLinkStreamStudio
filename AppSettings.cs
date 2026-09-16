@@ -119,7 +119,7 @@ public sealed class AppSettings
                 DeckLinkDevice = "go1080p25.mp4",
                 VideoStandardCode = "Hp25",
                 VideoEncoder = VideoEncoderType.LibX264,
-                VideoBitrateKbps = 5000,
+                VideoBitrateKbps = 6800,
                 KeyframeIntervalSeconds = 2,
                 OutputResolution = "1920x1080",
                 AudioBitrateKbps = 192,

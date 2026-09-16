@@ -68,7 +68,7 @@ public sealed class PlatformPreset
 
     public static readonly IReadOnlyList<PlatformPreset> Presets = new List<PlatformPreset>
     {
-        new() { Name = "YouTube Live (RTMP)", Protocol = StreamingProtocol.RTMP, DefaultServerUrl = "rtmp://a.rtmp.youtube.com/live2", RecommendedBitrateKbps = 6500, KeyframeIntervalSeconds = 2 },
+        new() { Name = "YouTube Live (RTMP)", Protocol = StreamingProtocol.RTMP, DefaultServerUrl = "rtmp://a.rtmp.youtube.com/live2", RecommendedBitrateKbps = 6800, KeyframeIntervalSeconds = 2 },
         new() { Name = "Facebook Live (RTMPS)", Protocol = StreamingProtocol.RTMP, DefaultServerUrl = "rtmps://live-api-s.facebook.com:443/rtmp/", RecommendedBitrateKbps = 4500, KeyframeIntervalSeconds = 2 },
         new() { Name = "Twitch (RTMP)", Protocol = StreamingProtocol.RTMP, DefaultServerUrl = "rtmp://live.twitch.tv/app/", RecommendedBitrateKbps = 6000, KeyframeIntervalSeconds = 2 },
         new() { Name = "Custom RTMP / RTMPS Server", Protocol = StreamingProtocol.RTMP, DefaultServerUrl = "rtmp://127.0.0.1/live", RecommendedBitrateKbps = 5000, KeyframeIntervalSeconds = 2 },

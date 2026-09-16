@@ -56,7 +56,7 @@
       <OldSuffixedExes Include="$(TargetDir)DeckLinkStreamStudio_*.exe" />
     </ItemGroup>
     <Delete Files="@(OldSuffixedExes)" />
-    <Move SourceFiles="$(TargetDir)DeckLinkStreamStudio.exe" DestinationFiles="$(TargetDir)$(SuffixedExeName)" />
+    <Copy SourceFiles="$(TargetDir)DeckLinkStreamStudio.exe" DestinationFiles="$(TargetDir)$(SuffixedExeName)" />
   </Target>
 
 </Project>
