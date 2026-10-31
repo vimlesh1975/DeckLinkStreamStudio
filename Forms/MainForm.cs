@@ -25,6 +25,9 @@ public sealed class MainForm : Form
     private readonly ComboBox _deviceComboBox = new();
     private readonly Label _lblFormat = new();
     private readonly ComboBox _formatComboBox = new();
+    private readonly TextBox _txtNetworkUrl = new();
+    private readonly Button _btnPasteUrl = new();
+    private readonly ToolTip _toolTip = new();
     private readonly Label _cpuBadge = new();
     private readonly Button _btnPreview = new();
     private readonly Button _btnListen = new();
@@ -329,6 +332,12 @@ public sealed class MainForm : Form
             for (int i = 0; i < _deviceComboBox.Items.Count; i++)
             {
                 var itemStr = _deviceComboBox.Items[i]?.ToString() ?? "";
+                if (itemStr.Contains("Network", StringComparison.OrdinalIgnoreCase) &&
+                    FfmpegStreamRunner.IsNetworkSource(_config.DeckLinkDevice))
+                {
+                    devIdx = i;
+                    break;
+                }
                 if (itemStr.Contains("go1080p25", StringComparison.OrdinalIgnoreCase) &&
                     _config.DeckLinkDevice.Contains("go1080p25", StringComparison.OrdinalIgnoreCase))
                 {
@@ -352,8 +361,12 @@ public sealed class MainForm : Form
                 _config.DeckLinkDevice = _deviceComboBox.SelectedItem.ToString()!;
                 _settings.Save();
 
-                bool isFile = FfmpegStreamRunner.IsFileSource(_config.DeckLinkDevice);
-                _formatComboBox.Enabled = !isFile;
+                UpdateInputSourceVisibility();
+
+                if (FfmpegStreamRunner.IsNetworkSource(_config.DeckLinkDevice) && string.IsNullOrWhiteSpace(_config.NetworkStreamUrl))
+                {
+                    _txtNetworkUrl.Focus();
+                }
 
                 if (_runner.IsRunning && GetActiveStreamCount() == 0)
                 {
@@ -406,7 +419,69 @@ public sealed class MainForm : Form
         };
 
         bool isFileInitial = FfmpegStreamRunner.IsFileSource(_config.DeckLinkDevice);
-        _formatComboBox.Enabled = !isFileInitial;
+        _formatComboBox.Enabled = !isFileInitial && !FfmpegStreamRunner.IsNetworkSource(_config.DeckLinkDevice);
+
+        // Network / YouTube Stream URL Input Controls
+        _txtNetworkUrl.Font = new Font("Segoe UI", 8.5f);
+        _txtNetworkUrl.Location = new Point(178, 8);
+        _txtNetworkUrl.Size = new Size(132, 23);
+        _txtNetworkUrl.Text = _config.NetworkStreamUrl;
+        _txtNetworkUrl.Visible = false;
+        _toolTip.SetToolTip(_txtNetworkUrl, "Enter YouTube Live URL (e.g. https://www.youtube.com/watch?v=...) or Network Stream URL (HLS / RTSP / RTMP)");
+        SetTextBoxPadding(_txtNetworkUrl, 4, 4);
+        _txtNetworkUrl.TextChanged += (s, e) =>
+        {
+            if (_config.NetworkStreamUrl != _txtNetworkUrl.Text)
+            {
+                _config.NetworkStreamUrl = _txtNetworkUrl.Text.Trim();
+                _settings.Save();
+                YouTubeStreamResolver.InvalidateCache();
+            }
+        };
+        _txtNetworkUrl.Leave += (s, e) =>
+        {
+            if (_runner.IsRunning && GetActiveStreamCount() == 0 && FfmpegStreamRunner.IsNetworkSource(_config.DeckLinkDevice))
+            {
+                RestartStandbyPreviewAsync();
+            }
+        };
+
+        _btnPasteUrl.Text = "📋";
+        _btnPasteUrl.Font = new Font("Segoe UI", 8f);
+        _btnPasteUrl.Location = new Point(314, 8);
+        _btnPasteUrl.Size = new Size(35, 23);
+        _btnPasteUrl.FlatStyle = FlatStyle.Flat;
+        _btnPasteUrl.FlatAppearance.BorderSize = 0;
+        _btnPasteUrl.Visible = false;
+        _toolTip.SetToolTip(_btnPasteUrl, "Click to paste stream URL from clipboard or enter new URL");
+        _btnPasteUrl.Click += (s, e) =>
+        {
+            try
+            {
+                if (Clipboard.ContainsText())
+                {
+                    var text = Clipboard.GetText().Trim();
+                    if (YouTubeStreamResolver.IsYouTubeUrl(text) || YouTubeStreamResolver.IsNetworkUrl(text))
+                    {
+                        _txtNetworkUrl.Text = text;
+                        _config.NetworkStreamUrl = text;
+                        _settings.Save();
+                        YouTubeStreamResolver.InvalidateCache();
+                        AppendLog($"[SOURCE] Pasted Network/YouTube URL: {YouTubeStreamResolver.GetDisplayUrl(text)}");
+                        if (_runner.IsRunning && GetActiveStreamCount() == 0)
+                        {
+                            RestartStandbyPreviewAsync();
+                        }
+                        return;
+                    }
+                }
+            }
+            catch { }
+
+            PromptForNetworkUrl();
+        };
+
+        UpdateInputSourceVisibility();
 
         // CPU Usage Badge (Big, prominent font)
         _cpuBadge.Text = "CPU: 0%";
@@ -468,6 +543,8 @@ public sealed class MainForm : Form
         _topHeader.Controls.Add(_deviceComboBox);
         _topHeader.Controls.Add(_lblFormat);
         _topHeader.Controls.Add(_formatComboBox);
+        _topHeader.Controls.Add(_txtNetworkUrl);
+        _topHeader.Controls.Add(_btnPasteUrl);
         _topHeader.Controls.Add(_cpuBadge);
         _topHeader.Controls.Add(_btnPreview);
         _topHeader.Controls.Add(_btnListen);
@@ -483,6 +560,103 @@ public sealed class MainForm : Form
     private void UpdateHeaderBadgePositions()
     {
         _cpuBadge.Location = new Point(_formatComboBox.Right + 12, 5);
+    }
+
+    private void UpdateInputSourceVisibility()
+    {
+        bool isNetwork = FfmpegStreamRunner.IsNetworkSource(_config.DeckLinkDevice);
+        bool isFile = FfmpegStreamRunner.IsFileSource(_config.DeckLinkDevice);
+
+        _lblFormat.Visible = !isNetwork;
+        _formatComboBox.Visible = !isNetwork;
+        _formatComboBox.Enabled = !isFile && !isNetwork;
+
+        _txtNetworkUrl.Visible = isNetwork;
+        _btnPasteUrl.Visible = isNetwork;
+
+        if (isNetwork && string.IsNullOrWhiteSpace(_txtNetworkUrl.Text) && !string.IsNullOrWhiteSpace(_config.NetworkStreamUrl))
+        {
+            _txtNetworkUrl.Text = _config.NetworkStreamUrl;
+        }
+    }
+
+    private void PromptForNetworkUrl()
+    {
+        using var dlg = new Form
+        {
+            Text = "Enter YouTube or Stream URL",
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            StartPosition = FormStartPosition.CenterParent,
+            MaximizeBox = false,
+            MinimizeBox = false,
+            ClientSize = new Size(460, 130),
+            BackColor = _chkDarkMode.Checked ? Color.FromArgb(15, 23, 42) : Color.FromArgb(248, 250, 252),
+            ForeColor = _chkDarkMode.Checked ? Color.FromArgb(241, 245, 249) : Color.FromArgb(15, 23, 42)
+        };
+
+        var lbl = new Label
+        {
+            Text = "YouTube Live / Network Stream URL (HLS / RTSP / RTMP):",
+            Location = new Point(14, 14),
+            AutoSize = true,
+            Font = new Font("Segoe UI", 9f, FontStyle.Bold)
+        };
+
+        var txt = new TextBox
+        {
+            Location = new Point(14, 38),
+            Size = new Size(430, 24),
+            Text = _config.NetworkStreamUrl,
+            Font = new Font("Segoe UI", 9f),
+            BackColor = _chkDarkMode.Checked ? Color.FromArgb(30, 41, 59) : Color.White,
+            ForeColor = _chkDarkMode.Checked ? Color.FromArgb(241, 245, 249) : Color.FromArgb(15, 23, 42),
+            BorderStyle = BorderStyle.FixedSingle
+        };
+
+        var btnOk = new Button
+        {
+            Text = "OK",
+            DialogResult = DialogResult.OK,
+            Location = new Point(276, 80),
+            Size = new Size(80, 28),
+            BackColor = Color.FromArgb(37, 99, 235),
+            ForeColor = Color.White,
+            FlatStyle = FlatStyle.Flat
+        };
+        btnOk.FlatAppearance.BorderSize = 0;
+
+        var btnCancel = new Button
+        {
+            Text = "Cancel",
+            DialogResult = DialogResult.Cancel,
+            Location = new Point(364, 80),
+            Size = new Size(80, 28),
+            BackColor = Color.FromArgb(71, 85, 105),
+            ForeColor = Color.White,
+            FlatStyle = FlatStyle.Flat
+        };
+        btnCancel.FlatAppearance.BorderSize = 0;
+
+        dlg.Controls.Add(lbl);
+        dlg.Controls.Add(txt);
+        dlg.Controls.Add(btnOk);
+        dlg.Controls.Add(btnCancel);
+        dlg.AcceptButton = btnOk;
+        dlg.CancelButton = btnCancel;
+
+        if (dlg.ShowDialog(this) == DialogResult.OK)
+        {
+            var newUrl = txt.Text.Trim();
+            _txtNetworkUrl.Text = newUrl;
+            _config.NetworkStreamUrl = newUrl;
+            _settings.Save();
+            YouTubeStreamResolver.InvalidateCache();
+            AppendLog($"[SOURCE] Updated URL: {YouTubeStreamResolver.GetDisplayUrl(newUrl)}");
+            if (_runner.IsRunning && GetActiveStreamCount() == 0)
+            {
+                RestartStandbyPreviewAsync();
+            }
+        }
     }
 
     private void LayoutTopHeaderRightControls()
@@ -1109,6 +1283,10 @@ public sealed class MainForm : Form
         _deviceComboBox.ForeColor = textMain;
         _formatComboBox.BackColor = bgControl;
         _formatComboBox.ForeColor = textMain;
+        _txtNetworkUrl.BackColor = bgControl;
+        _txtNetworkUrl.ForeColor = textMain;
+        _btnPasteUrl.BackColor = bgControl;
+        _btnPasteUrl.ForeColor = textMain;
 
         _leftPanel.BackColor = bgMain;
         _rightPanel.BackColor = bgMain;
@@ -1336,6 +1514,8 @@ public sealed class MainForm : Form
             _btnPreview.Enabled = false;
             _deviceComboBox.Enabled = false;
             _formatComboBox.Enabled = false;
+            _txtNetworkUrl.Enabled = false;
+            _btnPasteUrl.Enabled = false;
             _encoderCombo.Enabled = false;
             _bitrateUpDown.Enabled = false;
         }
@@ -1343,7 +1523,9 @@ public sealed class MainForm : Form
         {
             _btnPreview.Enabled = true;
             _deviceComboBox.Enabled = true;
-            _formatComboBox.Enabled = !FfmpegStreamRunner.IsFileSource(_config.DeckLinkDevice);
+            _txtNetworkUrl.Enabled = true;
+            _btnPasteUrl.Enabled = true;
+            UpdateInputSourceVisibility();
             _encoderCombo.Enabled = true;
             _bitrateUpDown.Enabled = true;
 
@@ -1622,9 +1804,11 @@ public sealed class MainForm : Form
     {
         if (_fullscreenForm == null || _fullscreenForm.IsDisposed)
         {
-            var title = FfmpegStreamRunner.IsFileSource(_config.DeckLinkDevice)
-                ? $"{_config.DeckLinkDevice} (Loop)"
-                : $"{_config.DeckLinkDevice} ({_config.VideoStandardCode})";
+            var title = FfmpegStreamRunner.IsNetworkSource(_config.DeckLinkDevice)
+                ? $"🌐 Network ({YouTubeStreamResolver.GetDisplayUrl(_config.NetworkStreamUrl, 25)})"
+                : (FfmpegStreamRunner.IsFileSource(_config.DeckLinkDevice)
+                    ? $"{_config.DeckLinkDevice} (Loop)"
+                    : $"{_config.DeckLinkDevice} ({_config.VideoStandardCode})");
             _fullscreenForm = new FullscreenPreviewForm(title);
             _fullscreenForm.FormClosed += (s, e) => _fullscreenForm = null;
             _fullscreenForm.Show();
@@ -1640,6 +1824,8 @@ public sealed class MainForm : Form
         _bitrateUpDown.Value = _config.VideoBitrateKbps;
         _chkDeinterlace.Checked = _config.Deinterlace;
         _delayUpDown.Value = _config.AudioDelayMs;
+        _txtNetworkUrl.Text = _config.NetworkStreamUrl;
+        UpdateInputSourceVisibility();
 
         if (_config.Destinations.Count > 0)
         {

@@ -233,6 +233,105 @@ public sealed class FfmpegStreamRunner : IDisposable
                s.Contains("go1080p25", StringComparison.OrdinalIgnoreCase);
     }
 
+    public static bool IsNetworkSource(string? source)
+    {
+        if (string.IsNullOrWhiteSpace(source)) return false;
+        var s = source.Trim();
+        return s.Contains("YouTube", StringComparison.OrdinalIgnoreCase) ||
+               s.Contains("Network", StringComparison.OrdinalIgnoreCase) ||
+               s.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+               s.StartsWith("https://", StringComparison.OrdinalIgnoreCase) ||
+               s.StartsWith("rtsp://", StringComparison.OrdinalIgnoreCase) ||
+               s.StartsWith("rtmp://", StringComparison.OrdinalIgnoreCase) ||
+               s.StartsWith("srt://", StringComparison.OrdinalIgnoreCase);
+    }
+
+    public static bool IsHardwareDeckLink(string? source)
+    {
+        return !IsFileSource(source) && !IsNetworkSource(source);
+    }
+
+    public sealed class ResolvedInputDetails
+    {
+        public bool IsDualInput { get; set; }
+        public string InputArguments { get; set; } = "";
+        public string VideoSpecifier => "[0:v]";
+        public string AudioSpecifier => IsDualInput ? "[1:a]" : "[0:a]";
+        public string? ResolvedAudioUrl { get; set; }
+    }
+
+    private static string? _lastResolvedAudioUrl;
+    public static string? GetLastResolvedAudioUrl() => _lastResolvedAudioUrl;
+
+    public ResolvedInputDetails ResolveInputDetails(StreamConfig config)
+    {
+        var details = new ResolvedInputDetails();
+
+        if (IsNetworkSource(config.DeckLinkDevice))
+        {
+            var rawUrl = !string.IsNullOrWhiteSpace(config.NetworkStreamUrl) 
+                ? config.NetworkStreamUrl.Trim() 
+                : (YouTubeStreamResolver.IsNetworkUrl(config.DeckLinkDevice) ? config.DeckLinkDevice.Trim() : "");
+
+            if (string.IsNullOrWhiteSpace(rawUrl))
+            {
+                OnLog?.Invoke("[WARNING] Network/YouTube Stream URL is empty. Please enter a valid stream URL.");
+                details.InputArguments = "-f lavfi -i smptebars=size=1920x1080:rate=25 -f lavfi -i anullsrc=r=48000:cl=stereo ";
+                return details;
+            }
+
+            if (YouTubeStreamResolver.IsYouTubeUrl(rawUrl))
+            {
+                var ytRes = YouTubeStreamResolver.ResolveStreamUrls(rawUrl, msg => OnLog?.Invoke(msg));
+                if (ytRes.Success && ytRes.StreamUrls.Length > 0)
+                {
+                    _lastResolvedAudioUrl = ytRes.AudioUrl;
+                    if (ytRes.IsDualStream)
+                    {
+                        details.IsDualInput = true;
+                        details.InputArguments = $"-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -re -i \"{ytRes.VideoUrl}\" -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -re -i \"{ytRes.AudioUrl}\" ";
+                        return details;
+                    }
+                    else
+                    {
+                        details.IsDualInput = false;
+                        details.InputArguments = $"-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -re -i \"{ytRes.StreamUrls[0]}\" ";
+                        return details;
+                    }
+                }
+                else
+                {
+                    OnLog?.Invoke($"[YOUTUBE ERROR] Could not extract live stream: {ytRes.ErrorMessage}");
+                    details.InputArguments = "-f lavfi -i smptebars=size=1920x1080:rate=25 -f lavfi -i anullsrc=r=48000:cl=stereo ";
+                    return details;
+                }
+            }
+            else
+            {
+                // Direct RTSP, RTMP, HLS (.m3u8), or HTTP stream
+                _lastResolvedAudioUrl = rawUrl;
+                details.IsDualInput = false;
+                details.InputArguments = $"-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -re -i \"{rawUrl}\" ";
+                return details;
+            }
+        }
+        else if (IsFileSource(config.DeckLinkDevice))
+        {
+            var filePath = ResolveMediaFilePath(config.DeckLinkDevice);
+            details.IsDualInput = false;
+            details.InputArguments = $"-stream_loop -1 -re -i \"{filePath}\" ";
+            return details;
+        }
+        else
+        {
+            var sb = new StringBuilder();
+            AppendDeckLinkInput(sb, config);
+            details.IsDualInput = false;
+            details.InputArguments = sb.ToString();
+            return details;
+        }
+    }
+
     public static string ResolveMediaFilePath(string? fileName = "go1080p25.mp4")
     {
         if (string.IsNullOrWhiteSpace(fileName))
@@ -278,7 +377,12 @@ public sealed class FfmpegStreamRunner : IDisposable
 
     private void AppendInputSource(StringBuilder sb, StreamConfig config)
     {
-        if (IsFileSource(config.DeckLinkDevice))
+        if (IsNetworkSource(config.DeckLinkDevice))
+        {
+            var input = ResolveInputDetails(config);
+            sb.Append(input.InputArguments);
+        }
+        else if (IsFileSource(config.DeckLinkDevice))
         {
             var filePath = ResolveMediaFilePath(config.DeckLinkDevice);
             sb.Append($"-stream_loop -1 -re -i \"{filePath}\" ");
@@ -291,14 +395,16 @@ public sealed class FfmpegStreamRunner : IDisposable
 
     private string BuildStandbyPreviewArguments(StreamConfig config)
     {
+        var inputDetails = ResolveInputDetails(config);
+
         var sb = new StringBuilder();
         sb.Append("-hide_banner -loglevel info -stats ");
 
-        // Input Source (File loop or DeckLink hardware)
-        AppendInputSource(sb, config);
+        // Input Source (File loop, DeckLink hardware, or YouTube/Network stream)
+        sb.Append(inputDetails.InputArguments);
 
         var previewFps = config.PreviewFps > 0 ? config.PreviewFps : 15;
-        var filter = BuildLiveStreamFilterGraph(config, previewFps, dualEncoding: false);
+        var filter = BuildLiveStreamFilterGraph(config, previewFps, dualEncoding: false, inputDetails.VideoSpecifier, inputDetails.AudioSpecifier);
         sb.Append($"-filter_complex \"{filter}\" ");
 
         // Master broadcast stream encoded once and distributed via TCP Hub
@@ -316,11 +422,13 @@ public sealed class FfmpegStreamRunner : IDisposable
 
     private string BuildLiveStreamArguments(StreamConfig config)
     {
+        var inputDetails = ResolveInputDetails(config);
+
         var sb = new StringBuilder();
         sb.Append("-hide_banner -loglevel info -stats ");
 
-        // Input Source (File loop or DeckLink hardware)
-        AppendInputSource(sb, config);
+        // Input Source (File loop, DeckLink hardware, or YouTube/Network stream)
+        sb.Append(inputDetails.InputArguments);
 
         // Collect Enabled Destinations (Sahyadri Facebook, Sahyadri YouTube, Sahyadri YouTube News)
         var enabledDests = config.Destinations
@@ -339,7 +447,7 @@ public sealed class FfmpegStreamRunner : IDisposable
 
         // Filter Complex for Preview + Deinterlacing / Scaling (+ dual stream splitting if needed)
         var previewFps = config.PreviewFps > 0 ? config.PreviewFps : 15;
-        var filter = BuildLiveStreamFilterGraph(config, previewFps, dualEncoding);
+        var filter = BuildLiveStreamFilterGraph(config, previewFps, dualEncoding, inputDetails.VideoSpecifier, inputDetails.AudioSpecifier);
         sb.Append($"-filter_complex \"{filter}\" ");
 
         var gopSize = Math.Max(25, (config.TargetFps > 0 ? config.TargetFps : 25) * config.KeyframeIntervalSeconds);
@@ -415,18 +523,18 @@ public sealed class FfmpegStreamRunner : IDisposable
                "[left_bar][v_scaled][right_bar]hstack=inputs=3,format=bgr24[tx_preview]";
     }
 
-    private string BuildLiveStreamFilterGraph(StreamConfig config, int previewFps, bool dualEncoding = false)
+    private string BuildLiveStreamFilterGraph(StreamConfig config, int previewFps, bool dualEncoding = false, string videoInput = "[0:v]", string audioInput = "[0:a]")
     {
         var sb = new StringBuilder();
 
         // Audio processing chain with clock-drift correction (async=1) and optional sync delay
         if (config.AudioDelayMs > 0)
         {
-            sb.Append($"[0:a]aresample=48000:async=1,adelay={config.AudioDelayMs}|{config.AudioDelayMs},asplit=2[a_stream][a_for_meter];");
+            sb.Append($"{audioInput}aresample=48000:async=1,adelay={config.AudioDelayMs}|{config.AudioDelayMs},asplit=2[a_stream][a_for_meter];");
         }
         else
         {
-            sb.Append("[0:a]aresample=48000:async=1,asplit=2[a_stream][a_for_meter];");
+            sb.Append($"{audioInput}aresample=48000:async=1,asplit=2[a_stream][a_for_meter];");
         }
 
         if (dualEncoding)
@@ -439,7 +547,7 @@ public sealed class FfmpegStreamRunner : IDisposable
 
         // Video stream scaling & optional deinterlace
         string videoProcess = "";
-        if (config.Deinterlace && !IsFileSource(config.DeckLinkDevice))
+        if (config.Deinterlace && IsHardwareDeckLink(config.DeckLinkDevice))
         {
             videoProcess += "yadif=0:-1:0,";
         }
@@ -461,7 +569,7 @@ public sealed class FfmpegStreamRunner : IDisposable
         videoProcess += "format=yuv420p";
 
         // Split input video into main stream and preview stage
-        sb.Append("[0:v]split=2[v_raw_stream][v_raw_preview];");
+        sb.Append($"{videoInput}split=2[v_raw_stream][v_raw_preview];");
         sb.Append($"[v_raw_stream]{videoProcess}[v_stream];");
 
         if (dualEncoding)

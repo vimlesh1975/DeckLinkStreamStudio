@@ -29,8 +29,9 @@ public sealed class DestinationConfig
 
 public sealed class StreamConfig
 {
-    // Input Source (File loop or DeckLink hardware)
+    // Input Source (File loop, DeckLink hardware, or YouTube/Network Stream)
     public string DeckLinkDevice { get; set; } = "go1080p25.mp4";
+    public string NetworkStreamUrl { get; set; } = "";
     public string VideoStandardCode { get; set; } = "Hp25";
     public string VideoInput { get; set; } = "sdi"; // sdi, hdmi, optical_sdi
     public string AudioInput { get; set; } = "embedded";

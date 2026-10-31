@@ -105,7 +105,30 @@ public sealed class AudioMonitorRunner : IDisposable
 
             try
             {
-                if (FfmpegStreamRunner.IsFileSource(decklinkDevice))
+                if (FfmpegStreamRunner.IsNetworkSource(decklinkDevice))
+                {
+                    string? audioUrl = FfmpegStreamRunner.GetLastResolvedAudioUrl();
+                    if (string.IsNullOrWhiteSpace(audioUrl))
+                    {
+                        OnLog?.Invoke("[LISTEN] Please start Preview first so the audio stream URL can resolve.");
+                        return false;
+                    }
+
+                    var ffplayPath = FfmpegStreamRunner.ResolveFfmpegPath().Replace("ffmpeg.exe", "ffplay.exe");
+                    if (!File.Exists(ffplayPath)) ffplayPath = "ffplay.exe";
+
+                    var psi = new ProcessStartInfo
+                    {
+                        FileName = ffplayPath,
+                        Arguments = $"-nodisp -vn -loglevel error \"{audioUrl}\"",
+                        UseShellExecute = false,
+                        CreateNoWindow = true
+                    };
+
+                    _process = Process.Start(psi);
+                    return _process != null && !_process.HasExited;
+                }
+                else if (FfmpegStreamRunner.IsFileSource(decklinkDevice))
                 {
                     var filePath = FfmpegStreamRunner.ResolveMediaFilePath(decklinkDevice);
                     if (!File.Exists(filePath)) return false;

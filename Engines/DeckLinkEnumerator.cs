@@ -22,6 +22,7 @@ public sealed record DeckLinkDeviceEntry(
 public static class DeckLinkEnumerator
 {
     public const string DefaultFileSource = "go1080p25.mp4";
+    public const string NetworkStreamSource = "🌐 YouTube / Network Stream";
 
     private static readonly object _syncLock = new();
     private static List<DeckLinkDeviceEntry>? _cachedDevices;
@@ -143,6 +144,9 @@ public static class DeckLinkEnumerator
             // Always keep the file-based streaming source as standby/loop source
             devices.Add(new DeckLinkDeviceEntry(DefaultFileSource, DefaultFileSource, "go1080p25.mp4 (Loop File)"));
 
+            // Network / YouTube live streaming source
+            devices.Add(new DeckLinkDeviceEntry(NetworkStreamSource, NetworkStreamSource, "YouTube Live / Network Stream"));
+
             _cachedDevices = devices;
             return new List<DeckLinkDeviceEntry>(devices);
         }
@@ -150,7 +154,7 @@ public static class DeckLinkEnumerator
 
     public static string ResolveInputTarget(string? deviceNameOrId)
     {
-        if (string.IsNullOrWhiteSpace(deviceNameOrId) || FfmpegStreamRunner.IsFileSource(deviceNameOrId))
+        if (string.IsNullOrWhiteSpace(deviceNameOrId) || FfmpegStreamRunner.IsFileSource(deviceNameOrId) || FfmpegStreamRunner.IsNetworkSource(deviceNameOrId))
             return deviceNameOrId ?? "";
 
         var devices = GetInstalledDevices();
@@ -175,7 +179,7 @@ public static class DeckLinkEnumerator
 
     public static string ResolveAudioTarget(string? deviceNameOrId)
     {
-        if (string.IsNullOrWhiteSpace(deviceNameOrId) || FfmpegStreamRunner.IsFileSource(deviceNameOrId))
+        if (string.IsNullOrWhiteSpace(deviceNameOrId) || FfmpegStreamRunner.IsFileSource(deviceNameOrId) || FfmpegStreamRunner.IsNetworkSource(deviceNameOrId))
             return "";
 
         var devices = GetInstalledDevices();

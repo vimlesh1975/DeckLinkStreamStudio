@@ -17,6 +17,9 @@ appsettings.json
 settings.json
 **/settings.json
 
+# Ignore root yt-dlp.exe
+/yt-dlp.exe
+
 # Ignore everything in bin except win-x64 Release binaries
 bin/*
 !bin/Release/
@@ -24,4 +27,5 @@ bin/Release/*
 !bin/Release/net10.0-windows/
 bin/Release/net10.0-windows/*
 !bin/Release/net10.0-windows/win-x64/
+!bin/Release/net10.0-windows/win-x64/**
 bin/Release/net10.0-windows/win-x64/*.log
