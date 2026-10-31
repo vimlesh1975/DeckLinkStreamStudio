@@ -107,20 +107,13 @@ public sealed class AudioMonitorRunner : IDisposable
             {
                 if (FfmpegStreamRunner.IsNetworkSource(decklinkDevice))
                 {
-                    string? audioUrl = FfmpegStreamRunner.GetLastResolvedAudioUrl();
-                    if (string.IsNullOrWhiteSpace(audioUrl))
-                    {
-                        OnLog?.Invoke("[LISTEN] Please start Preview first so the audio stream URL can resolve.");
-                        return false;
-                    }
-
                     var ffplayPath = FfmpegStreamRunner.ResolveFfmpegPath().Replace("ffmpeg.exe", "ffplay.exe");
                     if (!File.Exists(ffplayPath)) ffplayPath = "ffplay.exe";
 
                     var psi = new ProcessStartInfo
                     {
                         FileName = ffplayPath,
-                        Arguments = $"-nodisp -vn -loglevel error \"{audioUrl}\"",
+                        Arguments = $"-nodisp -vn -loglevel error -rw_timeout 5000000 tcp://127.0.0.1:{TcpBroadcastHub.AudioMonitorPort}",
                         UseShellExecute = false,
                         CreateNoWindow = true
                     };

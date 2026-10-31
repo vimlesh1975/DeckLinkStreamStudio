@@ -20,6 +20,8 @@ public enum RunnerMode
 public sealed class FfmpegStreamRunner : IDisposable
 {
     private Process? _process;
+    private Process? _ytDlpProcess;
+    private CancellationTokenSource? _pipeCts;
     private StreamPreviewReader? _previewReader;
     private readonly object _syncRoot = new();
     private DateTime _startTimeUtc;
@@ -90,8 +92,9 @@ public sealed class FfmpegStreamRunner : IDisposable
             _hub.Start();
             _currentConfig = config;
             CurrentMode = RunnerMode.StandbyPreview;
-            var args = BuildStandbyPreviewArguments(config);
-            return LaunchProcess(args, RunnerMode.StandbyPreview);
+            var inputDetails = ResolveInputDetails(config);
+            var args = BuildStandbyPreviewArguments(config, inputDetails);
+            return LaunchProcess(args, RunnerMode.StandbyPreview, inputDetails);
         }
     }
 
@@ -107,8 +110,9 @@ public sealed class FfmpegStreamRunner : IDisposable
 
             _currentConfig = config;
             CurrentMode = RunnerMode.LiveStream;
-            var args = BuildLiveStreamArguments(config);
-            return LaunchProcess(args, RunnerMode.LiveStream);
+            var inputDetails = ResolveInputDetails(config);
+            var args = BuildLiveStreamArguments(config, inputDetails);
+            return LaunchProcess(args, RunnerMode.LiveStream, inputDetails);
         }
     }
 
@@ -258,6 +262,8 @@ public sealed class FfmpegStreamRunner : IDisposable
         public string VideoSpecifier => "[0:v]";
         public string AudioSpecifier => IsDualInput ? "[1:a]" : "[0:a]";
         public string? ResolvedAudioUrl { get; set; }
+        public bool IsYouTubePiped { get; set; }
+        public string? YouTubeUrl { get; set; }
     }
 
     private static string? _lastResolvedAudioUrl;
@@ -282,37 +288,22 @@ public sealed class FfmpegStreamRunner : IDisposable
                 return details;
             }
 
-            var netFlags = $"-user_agent \"{BrowserUserAgent}\" -headers \"Accept: */*\\r\\n\" -rw_timeout 15000000 -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 2 ";
-
             if (YouTubeStreamResolver.IsYouTubeUrl(rawUrl))
             {
-                var ytRes = YouTubeStreamResolver.ResolveStreamUrls(rawUrl, msg => OnLog?.Invoke(msg));
-                if (ytRes.Success && ytRes.StreamUrls.Length > 0)
-                {
-                    _lastResolvedAudioUrl = ytRes.AudioUrl;
-                    if (ytRes.IsDualStream)
-                    {
-                        details.IsDualInput = true;
-                        details.InputArguments = $"{netFlags}-re -i \"{ytRes.VideoUrl}\" {netFlags}-re -i \"{ytRes.AudioUrl}\" ";
-                        return details;
-                    }
-                    else
-                    {
-                        details.IsDualInput = false;
-                        details.InputArguments = $"{netFlags}-re -i \"{ytRes.StreamUrls[0]}\" ";
-                        return details;
-                    }
-                }
-                else
-                {
-                    OnLog?.Invoke($"[YOUTUBE ERROR] Could not extract live stream: {ytRes.ErrorMessage}");
-                    details.InputArguments = "-f lavfi -i smptebars=size=1920x1080:rate=25 -f lavfi -i anullsrc=r=48000:cl=stereo ";
-                    return details;
-                }
+                // Ingesting YouTube HLS directly into FFmpeg causes 403 Forbidden errors after ~1 minute
+                // because YouTube CDN session tokens rotate. yt-dlp manages chunk signatures and tokens natively,
+                // piping a continuous MPEG-TS stream into FFmpeg's stdin (pipe:0).
+                _lastResolvedAudioUrl = rawUrl;
+                details.IsDualInput = false;
+                details.IsYouTubePiped = true;
+                details.YouTubeUrl = rawUrl;
+                details.InputArguments = "-re -i pipe:0 ";
+                return details;
             }
             else
             {
                 // Direct RTSP, RTMP, HLS (.m3u8), or HTTP stream
+                var netFlags = $"-user_agent \"{BrowserUserAgent}\" -headers \"Accept: */*\\r\\n\" -rw_timeout 15000000 -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 2 ";
                 _lastResolvedAudioUrl = rawUrl;
                 details.IsDualInput = false;
                 details.InputArguments = $"{netFlags}-re -i \"{rawUrl}\" ";
@@ -397,9 +388,9 @@ public sealed class FfmpegStreamRunner : IDisposable
         }
     }
 
-    private string BuildStandbyPreviewArguments(StreamConfig config)
+    private string BuildStandbyPreviewArguments(StreamConfig config, ResolvedInputDetails? inputDetails = null)
     {
-        var inputDetails = ResolveInputDetails(config);
+        inputDetails ??= ResolveInputDetails(config);
 
         var sb = new StringBuilder();
         sb.Append("-hide_banner -loglevel info -stats ");
@@ -424,9 +415,9 @@ public sealed class FfmpegStreamRunner : IDisposable
         return sb.ToString();
     }
 
-    private string BuildLiveStreamArguments(StreamConfig config)
+    private string BuildLiveStreamArguments(StreamConfig config, ResolvedInputDetails? inputDetails = null)
     {
-        var inputDetails = ResolveInputDetails(config);
+        inputDetails ??= ResolveInputDetails(config);
 
         var sb = new StringBuilder();
         sb.Append("-hide_banner -loglevel info -stats ");
@@ -594,10 +585,68 @@ public sealed class FfmpegStreamRunner : IDisposable
         return sb.ToString();
     }
 
-    private bool LaunchProcess(string arguments, RunnerMode mode)
+    private bool LaunchProcess(string arguments, RunnerMode mode, ResolvedInputDetails? inputDetails = null)
     {
         try
         {
+            if (inputDetails != null && inputDetails.IsYouTubePiped && !string.IsNullOrWhiteSpace(inputDetails.YouTubeUrl))
+            {
+                var ytDlpPath = YouTubeStreamResolver.ResolveYtDlpPath();
+                if (string.IsNullOrWhiteSpace(ytDlpPath) || !File.Exists(ytDlpPath))
+                {
+                    OnLog?.Invoke("[ERROR] yt-dlp.exe not found. Cannot stream YouTube URL.");
+                    return false;
+                }
+
+                OnLog?.Invoke($"[YOUTUBE] Connecting to stream via yt-dlp: {YouTubeStreamResolver.GetDisplayUrl(inputDetails.YouTubeUrl)}");
+
+                var ytPsi = new ProcessStartInfo
+                {
+                    FileName = ytDlpPath,
+                    Arguments = $"-q --no-warnings --no-update -f \"b/best\" -o - \"{inputDetails.YouTubeUrl}\"",
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true,
+                    WorkingDirectory = AppDomain.CurrentDomain.BaseDirectory
+                };
+
+                Process? ytProc = null;
+                try
+                {
+                    ytProc = Process.Start(ytPsi);
+                }
+                catch (Exception ex)
+                {
+                    OnLog?.Invoke($"[ERROR] Failed to start yt-dlp: {ex.Message}");
+                    return false;
+                }
+
+                if (ytProc == null)
+                {
+                    OnLog?.Invoke("[ERROR] Failed to start yt-dlp process.");
+                    return false;
+                }
+
+                _ytDlpProcess = ytProc;
+                ytProc.EnableRaisingEvents = true;
+                ytProc.ErrorDataReceived += (s, e) =>
+                {
+                    if (!string.IsNullOrWhiteSpace(e.Data) && !e.Data.Contains("WARNING:", StringComparison.OrdinalIgnoreCase))
+                    {
+                        OnLog?.Invoke($"[YT-DLP] {e.Data.Trim()}");
+                    }
+                };
+                ytProc.BeginErrorReadLine();
+                ytProc.Exited += (s, e) =>
+                {
+                    if (_ytDlpProcess == ytProc)
+                    {
+                        OnLog?.Invoke("[YT-DLP] Stream source completed.");
+                    }
+                };
+            }
+
             var psi = new ProcessStartInfo
             {
                 FileName = _ffmpegPath,
@@ -633,6 +682,7 @@ public sealed class FfmpegStreamRunner : IDisposable
             if (!proc.Start())
             {
                 OnLog?.Invoke($"[ERROR] Failed to start FFmpeg process.");
+                StopYtDlpProcess();
                 return false;
             }
 
@@ -640,6 +690,32 @@ public sealed class FfmpegStreamRunner : IDisposable
             _startTimeUtc = DateTime.UtcNow;
 
             proc.BeginErrorReadLine();
+
+            if (inputDetails != null && inputDetails.IsYouTubePiped && _ytDlpProcess != null)
+            {
+                _pipeCts = new CancellationTokenSource();
+                var token = _pipeCts.Token;
+                var inStream = _ytDlpProcess.StandardOutput.BaseStream;
+                var outStream = proc.StandardInput.BaseStream;
+
+                _ = Task.Run(async () =>
+                {
+                    byte[] buffer = new byte[65536];
+                    try
+                    {
+                        int read;
+                        while (!token.IsCancellationRequested && (read = await inStream.ReadAsync(buffer, 0, buffer.Length, token)) > 0)
+                        {
+                            await outStream.WriteAsync(buffer, 0, read, token);
+                        }
+                    }
+                    catch (OperationCanceledException) { }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"[PipePump] Completed or stopped: {ex.Message}");
+                    }
+                }, token);
+            }
 
             // Preview reader runs for both StandbyPreview and LiveStream mode so video preview and meters stay live
             _previewReader = new StreamPreviewReader(proc.StandardOutput.BaseStream, PreviewTotalWidth, PreviewTotalHeight);
@@ -654,6 +730,7 @@ public sealed class FfmpegStreamRunner : IDisposable
         }
         catch (Exception ex)
         {
+            StopYtDlpProcess();
             OnLog?.Invoke($"[ERROR] Launch: {ex.Message}");
             OnStatusChanged?.Invoke(StreamStatus.Error, ex.Message);
             return false;
@@ -769,8 +846,36 @@ public sealed class FfmpegStreamRunner : IDisposable
         OnStatsUpdated?.Invoke(stats);
     }
 
+    private void StopYtDlpProcess()
+    {
+        if (_pipeCts != null)
+        {
+            try { _pipeCts.Cancel(); } catch { }
+            try { _pipeCts.Dispose(); } catch { }
+            _pipeCts = null;
+        }
+
+        if (_ytDlpProcess != null)
+        {
+            var ytProc = _ytDlpProcess;
+            _ytDlpProcess = null;
+            try
+            {
+                if (!ytProc.HasExited)
+                {
+                    ytProc.Kill(true);
+                    ytProc.WaitForExit(500);
+                }
+            }
+            catch { }
+            try { ytProc.Dispose(); } catch { }
+        }
+    }
+
     private void OnProcessExitedHandler(Process proc, RunnerMode mode)
     {
+        StopYtDlpProcess();
+
         int exitCode = -1;
         lock (_syncRoot)
         {
@@ -804,6 +909,8 @@ public sealed class FfmpegStreamRunner : IDisposable
 
     public void Stop()
     {
+        StopYtDlpProcess();
+
         Process? procToStop;
         StreamPreviewReader? readerToStop;
 

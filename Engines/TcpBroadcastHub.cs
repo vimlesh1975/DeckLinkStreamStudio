@@ -22,7 +22,8 @@ public sealed class TcpBroadcastHub : IDisposable
 {
     public const int MasterPort = 19350;
     public const int BaseClientPort = 19351;
-    public const int ClientCount = 3;
+    public const int ClientCount = 4;
+    public const int AudioMonitorPort = BaseClientPort + 3; // 19354
 
     private readonly TcpListener _masterListener;
     private readonly TcpListener[] _clientListeners = new TcpListener[ClientCount];
