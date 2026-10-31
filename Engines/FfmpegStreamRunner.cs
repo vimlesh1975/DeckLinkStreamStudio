@@ -297,7 +297,7 @@ public sealed class FfmpegStreamRunner : IDisposable
                 details.IsDualInput = false;
                 details.IsYouTubePiped = true;
                 details.YouTubeUrl = rawUrl;
-                details.InputArguments = "-thread_queue_size 1024 -i pipe:0 ";
+                details.InputArguments = "-fflags +discardcorrupt+genpts -thread_queue_size 1024 -re -i pipe:0 ";
                 return details;
             }
             else
