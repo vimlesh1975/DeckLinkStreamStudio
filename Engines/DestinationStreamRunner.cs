@@ -85,7 +85,7 @@ public sealed class DestinationStreamRunner : IDisposable
         sb.Append("-hide_banner -loglevel info -stats ");
 
         int clientPort = TcpBroadcastHub.BaseClientPort + DestinationIndex;
-        sb.Append($"-i tcp://127.0.0.1:{clientPort} ");
+        sb.Append($"-rw_timeout 5000000 -i tcp://127.0.0.1:{clientPort} ");
 
         var audioBitrate = Math.Max(128, config.AudioBitrateKbps);
         sb.Append($"-c:v copy -c:a aac -b:a {audioBitrate}k -ar 48000 -ac 2 -af \"aresample=async=1\" -avoid_negative_ts make_zero -max_muxing_queue_size 4096 -f flv \"{dest.FullUrl}\"");

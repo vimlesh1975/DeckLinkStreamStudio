@@ -118,7 +118,8 @@ public static class YouTubeStreamResolver
         {
             var nodePath = ResolveNodePath();
             var jsArg = !string.IsNullOrWhiteSpace(nodePath) ? $"--js-runtimes \"node:{nodePath}\" " : "";
-            var args = $"{jsArg}--no-playlist -g \"{cleanUrl}\"";
+            // Query manifest_url (master multi-track HLS variant) and -g as fallback
+            var args = $"{jsArg}--no-playlist --print \"manifest_url\" -g \"{cleanUrl}\"";
 
             var psi = new ProcessStartInfo
             {
@@ -146,6 +147,21 @@ public static class YouTubeStreamResolver
                                          s.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
                              .ToArray();
 
+            // 1. Look for master HLS variant playlist (contains /hls_variant/ or /file/index.m3u8)
+            var masterHls = urls.FirstOrDefault(u => u.Contains("/hls_variant/") || u.EndsWith("/file/index.m3u8", StringComparison.OrdinalIgnoreCase));
+            if (!string.IsNullOrWhiteSpace(masterHls))
+            {
+                var result = new YouTubeResolutionResult
+                {
+                    Success = true,
+                    StreamUrls = new[] { masterHls }
+                };
+                _cache[cleanUrl] = (DateTime.UtcNow.Add(CacheDuration), result);
+                logCallback?.Invoke($"[YOUTUBE] Master Live HLS Stream resolved: {GetDisplayUrl(masterHls)}");
+                return result;
+            }
+
+            // 2. Fallback to direct stream URLs
             if (urls.Length > 0)
             {
                 var result = new YouTubeResolutionResult

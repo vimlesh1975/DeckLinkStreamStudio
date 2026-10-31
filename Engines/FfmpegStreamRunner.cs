@@ -263,6 +263,8 @@ public sealed class FfmpegStreamRunner : IDisposable
     private static string? _lastResolvedAudioUrl;
     public static string? GetLastResolvedAudioUrl() => _lastResolvedAudioUrl;
 
+    public const string BrowserUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36";
+
     public ResolvedInputDetails ResolveInputDetails(StreamConfig config)
     {
         var details = new ResolvedInputDetails();
@@ -280,6 +282,8 @@ public sealed class FfmpegStreamRunner : IDisposable
                 return details;
             }
 
+            var netFlags = $"-user_agent \"{BrowserUserAgent}\" -headers \"Accept: */*\\r\\n\" -rw_timeout 15000000 -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 2 ";
+
             if (YouTubeStreamResolver.IsYouTubeUrl(rawUrl))
             {
                 var ytRes = YouTubeStreamResolver.ResolveStreamUrls(rawUrl, msg => OnLog?.Invoke(msg));
@@ -289,13 +293,13 @@ public sealed class FfmpegStreamRunner : IDisposable
                     if (ytRes.IsDualStream)
                     {
                         details.IsDualInput = true;
-                        details.InputArguments = $"-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -re -i \"{ytRes.VideoUrl}\" -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -re -i \"{ytRes.AudioUrl}\" ";
+                        details.InputArguments = $"{netFlags}-re -i \"{ytRes.VideoUrl}\" {netFlags}-re -i \"{ytRes.AudioUrl}\" ";
                         return details;
                     }
                     else
                     {
                         details.IsDualInput = false;
-                        details.InputArguments = $"-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -re -i \"{ytRes.StreamUrls[0]}\" ";
+                        details.InputArguments = $"{netFlags}-re -i \"{ytRes.StreamUrls[0]}\" ";
                         return details;
                     }
                 }
@@ -311,7 +315,7 @@ public sealed class FfmpegStreamRunner : IDisposable
                 // Direct RTSP, RTMP, HLS (.m3u8), or HTTP stream
                 _lastResolvedAudioUrl = rawUrl;
                 details.IsDualInput = false;
-                details.InputArguments = $"-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -re -i \"{rawUrl}\" ";
+                details.InputArguments = $"{netFlags}-re -i \"{rawUrl}\" ";
                 return details;
             }
         }
@@ -834,11 +838,11 @@ public sealed class FfmpegStreamRunner : IDisposable
                 }
                 catch { }
 
-                if (!procToStop.WaitForExit(3500))
+                if (!procToStop.WaitForExit(1000))
                 {
                     OnLog?.Invoke("[ERROR] Process did not exit after 'q', terminated.");
-                    procToStop.Kill(true);
-                    procToStop.WaitForExit(1000);
+                    try { procToStop.Kill(true); } catch { }
+                    procToStop.WaitForExit(500);
                 }
             }
         }

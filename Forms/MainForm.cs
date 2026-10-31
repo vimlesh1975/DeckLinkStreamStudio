@@ -438,11 +438,16 @@ public sealed class MainForm : Form
                 YouTubeStreamResolver.InvalidateCache();
             }
         };
-        _txtNetworkUrl.Leave += (s, e) =>
+        _txtNetworkUrl.KeyDown += (s, e) =>
         {
-            if (_runner.IsRunning && GetActiveStreamCount() == 0 && FfmpegStreamRunner.IsNetworkSource(_config.DeckLinkDevice))
+            if (e.KeyCode == Keys.Enter)
             {
-                RestartStandbyPreviewAsync();
+                e.Handled = true;
+                e.SuppressKeyPress = true;
+                if (_runner.IsRunning && GetActiveStreamCount() == 0 && FfmpegStreamRunner.IsNetworkSource(_config.DeckLinkDevice))
+                {
+                    RestartStandbyPreviewAsync();
+                }
             }
         };
 
