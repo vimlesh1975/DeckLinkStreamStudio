@@ -600,10 +600,13 @@ public sealed class FfmpegStreamRunner : IDisposable
 
                 OnLog?.Invoke($"[YOUTUBE] Connecting to stream via yt-dlp: {YouTubeStreamResolver.GetDisplayUrl(inputDetails.YouTubeUrl)}");
 
+                var nodePath = YouTubeStreamResolver.ResolveNodePath();
+                var jsArg = !string.IsNullOrWhiteSpace(nodePath) ? $"--js-runtimes \"node:{nodePath}\" " : "";
+
                 var ytPsi = new ProcessStartInfo
                 {
                     FileName = ytDlpPath,
-                    Arguments = $"-q --no-warnings --no-update -f \"b/best\" -o - \"{inputDetails.YouTubeUrl}\"",
+                    Arguments = $"-q --no-warnings --no-update {jsArg}-f \"bv*+ba/b\" -o - \"{inputDetails.YouTubeUrl}\"",
                     UseShellExecute = false,
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
