@@ -297,7 +297,7 @@ public sealed class FfmpegStreamRunner : IDisposable
                 details.IsDualInput = false;
                 details.IsYouTubePiped = true;
                 details.YouTubeUrl = rawUrl;
-                details.InputArguments = "-re -i pipe:0 ";
+                details.InputArguments = "-thread_queue_size 1024 -i pipe:0 ";
                 return details;
             }
             else
@@ -707,6 +707,7 @@ public sealed class FfmpegStreamRunner : IDisposable
                         while (!token.IsCancellationRequested && (read = await inStream.ReadAsync(buffer, 0, buffer.Length, token)) > 0)
                         {
                             await outStream.WriteAsync(buffer, 0, read, token);
+                            await outStream.FlushAsync(token);
                         }
                     }
                     catch (OperationCanceledException) { }

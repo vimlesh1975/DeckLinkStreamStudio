@@ -113,7 +113,7 @@ public sealed class AudioMonitorRunner : IDisposable
                     var psi = new ProcessStartInfo
                     {
                         FileName = ffplayPath,
-                        Arguments = $"-nodisp -vn -loglevel error -rw_timeout 5000000 tcp://127.0.0.1:{TcpBroadcastHub.AudioMonitorPort}",
+                        Arguments = $"-nodisp -vn -loglevel error -rw_timeout 30000000 tcp://127.0.0.1:{TcpBroadcastHub.AudioMonitorPort}",
                         UseShellExecute = false,
                         CreateNoWindow = true
                     };
