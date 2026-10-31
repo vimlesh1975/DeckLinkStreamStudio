@@ -282,7 +282,7 @@ public sealed class FfmpegStreamRunner : IDisposable
                 return details;
             }
 
-            var netFlags = $"-user_agent \"{BrowserUserAgent}\" -headers \"Accept: */*\\r\\n\" -rw_timeout 15000000 -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 2 ";
+            var netFlags = $"-user_agent \"{BrowserUserAgent}\" -headers \"Accept: */*\\r\\n\" -rw_timeout 15000000 -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 2 ";
 
             if (YouTubeStreamResolver.IsYouTubeUrl(rawUrl))
             {
