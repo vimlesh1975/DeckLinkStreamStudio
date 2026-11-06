@@ -43,7 +43,7 @@ public sealed class MainForm : Form
     private readonly Panel _videoToolBar = new();
     private readonly CheckBox _chkDeinterlace = new();
     private readonly Label _lblAudioDelay = new();
-    private readonly NumericUpDown _delayUpDown = new();
+    private readonly TrackBar _delayTrackBar = new();
     private readonly Button _btnSnapshot = new();
     private readonly Button _btnFullscreen = new();
 
@@ -739,22 +739,39 @@ public sealed class MainForm : Form
             _settings.Save();
         };
 
-        _lblAudioDelay.Text = "Delay:";
+        _lblAudioDelay.Text = $"Delay: {_config.AudioDelayMs} ms";
         _lblAudioDelay.Font = new Font("Segoe UI", 8f);
-        _lblAudioDelay.AutoSize = true;
-        _lblAudioDelay.Location = new Point(66, 8);
-
-        _delayUpDown.BorderStyle = BorderStyle.FixedSingle;
-        _delayUpDown.Font = new Font("Segoe UI", 8f);
-        _delayUpDown.Minimum = 0;
-        _delayUpDown.Maximum = 5000;
-        _delayUpDown.Value = _config.AudioDelayMs;
-        _delayUpDown.Increment = 50;
-        _delayUpDown.Width = 55;
-        _delayUpDown.Location = new Point(108, 5);
-        _delayUpDown.ValueChanged += (s, e) =>
+        _lblAudioDelay.AutoSize = false;
+        _lblAudioDelay.Size = new Size(95, 22);
+        _lblAudioDelay.TextAlign = ContentAlignment.MiddleLeft;
+        _lblAudioDelay.Location = new Point(66, 4);
+        _toolTip.SetToolTip(_lblAudioDelay, "Audio Delay (0 - 5000 ms). Double-click to reset to 0 ms");
+        _lblAudioDelay.DoubleClick += (s, e) =>
         {
-            _config.AudioDelayMs = (int)_delayUpDown.Value;
+            _delayTrackBar.Value = 0;
+            _config.AudioDelayMs = 0;
+            _lblAudioDelay.Text = "Delay: 0 ms";
+            _toolTip.SetToolTip(_delayTrackBar, "Audio Delay: 0 ms");
+            _settings.Save();
+        };
+
+        _delayTrackBar.AutoSize = false;
+        _delayTrackBar.TickStyle = TickStyle.None;
+        _delayTrackBar.Minimum = 0;
+        _delayTrackBar.Maximum = 5000;
+        _delayTrackBar.SmallChange = 25;
+        _delayTrackBar.LargeChange = 100;
+        _delayTrackBar.Height = 22;
+        _delayTrackBar.Value = Math.Clamp(_config.AudioDelayMs, 0, 5000);
+        _toolTip.SetToolTip(_delayTrackBar, $"Audio Delay: {_config.AudioDelayMs} ms (seek bar)");
+
+        _delayTrackBar.Scroll += (s, e) =>
+        {
+            int snapped = ((int)Math.Round(_delayTrackBar.Value / 25.0)) * 25;
+            snapped = Math.Clamp(snapped, 0, 5000);
+            _config.AudioDelayMs = snapped;
+            _lblAudioDelay.Text = $"Delay: {snapped} ms";
+            _toolTip.SetToolTip(_delayTrackBar, $"Audio Delay: {snapped} ms");
             _settings.Save();
         };
 
@@ -762,25 +779,26 @@ public sealed class MainForm : Form
         _btnSnapshot.Font = new Font("Segoe UI", 7.5f);
         _btnSnapshot.FlatStyle = FlatStyle.Flat;
         _btnSnapshot.FlatAppearance.BorderSize = 0;
-        _btnSnapshot.Width = 58;
+        _btnSnapshot.Width = 56;
         _btnSnapshot.Height = 22;
-        _btnSnapshot.Location = new Point(172, 4);
         _btnSnapshot.Click += (s, e) => TakeSnapshot();
 
         _btnFullscreen.Text = "⛶ FULL";
         _btnFullscreen.Font = new Font("Segoe UI", 7.5f);
         _btnFullscreen.FlatStyle = FlatStyle.Flat;
         _btnFullscreen.FlatAppearance.BorderSize = 0;
-        _btnFullscreen.Width = 55;
+        _btnFullscreen.Width = 54;
         _btnFullscreen.Height = 22;
-        _btnFullscreen.Location = new Point(236, 4);
         _btnFullscreen.Click += (s, e) => OpenFullscreen();
 
         _videoToolBar.Controls.Add(_chkDeinterlace);
         _videoToolBar.Controls.Add(_lblAudioDelay);
-        _videoToolBar.Controls.Add(_delayUpDown);
+        _videoToolBar.Controls.Add(_delayTrackBar);
         _videoToolBar.Controls.Add(_btnSnapshot);
         _videoToolBar.Controls.Add(_btnFullscreen);
+
+        _videoToolBar.Resize += (s, e) => LayoutVideoToolbar();
+        LayoutVideoToolbar();
 
         // 3. Compact Live Broadcast HUD
         _statsTable.Dock = DockStyle.Top;
@@ -1299,8 +1317,7 @@ public sealed class MainForm : Form
         _videoToolBar.BackColor = isDark ? Color.FromArgb(24, 30, 42) : Color.FromArgb(226, 232, 240);
         _chkDeinterlace.ForeColor = textMain;
         _lblAudioDelay.ForeColor = textSec;
-        _delayUpDown.BackColor = bgControl;
-        _delayUpDown.ForeColor = textMain;
+        _delayTrackBar.BackColor = _videoToolBar.BackColor;
         _btnSnapshot.BackColor = bgControl;
         _btnSnapshot.ForeColor = textMain;
         _btnFullscreen.BackColor = bgControl;
@@ -1828,7 +1845,8 @@ public sealed class MainForm : Form
     {
         _bitrateUpDown.Value = _config.VideoBitrateKbps;
         _chkDeinterlace.Checked = _config.Deinterlace;
-        _delayUpDown.Value = _config.AudioDelayMs;
+        _delayTrackBar.Value = Math.Clamp(_config.AudioDelayMs, 0, _delayTrackBar.Maximum);
+        _lblAudioDelay.Text = $"Delay: {_config.AudioDelayMs} ms";
         _txtNetworkUrl.Text = _config.NetworkStreamUrl;
         UpdateInputSourceVisibility();
 
@@ -1955,6 +1973,33 @@ public sealed class MainForm : Form
         _lastKernelTicks = kernelTicks;
         _lastUserTicks = userTicks;
         _hasCpuSample = true;
+    }
+
+    private void LayoutVideoToolbar()
+    {
+        int barWidth = _videoToolBar.ClientSize.Width;
+        if (barWidth <= 0) return;
+
+        int margin = 4;
+        int btnFullWidth = 54;
+        int btnSnapWidth = 56;
+
+        _btnFullscreen.Size = new Size(btnFullWidth, 22);
+        _btnFullscreen.Location = new Point(barWidth - btnFullWidth - margin, 4);
+
+        _btnSnapshot.Size = new Size(btnSnapWidth, 22);
+        _btnSnapshot.Location = new Point(_btnFullscreen.Left - btnSnapWidth - margin, 4);
+
+        _chkDeinterlace.Location = new Point(4, 5);
+
+        _lblAudioDelay.Location = new Point(_chkDeinterlace.Right + 8, 4);
+        _lblAudioDelay.Size = new Size(95, 22);
+
+        int trackLeft = _lblAudioDelay.Right + 4;
+        int trackWidth = Math.Max(50, _btnSnapshot.Left - trackLeft - 6);
+
+        _delayTrackBar.Location = new Point(trackLeft, 4);
+        _delayTrackBar.Size = new Size(trackWidth, 22);
     }
 
     private void FormatStatLabel(Label lbl, string header, string initialVal)

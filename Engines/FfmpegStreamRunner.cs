@@ -606,7 +606,7 @@ public sealed class FfmpegStreamRunner : IDisposable
                 var ytPsi = new ProcessStartInfo
                 {
                     FileName = ytDlpPath,
-                    Arguments = $"-q --no-warnings --no-update {jsArg}-f \"bv*+ba/b\" -o - \"{inputDetails.YouTubeUrl}\"",
+                    Arguments = $"-q --no-warnings --no-update {jsArg}-f \"bv*[height<=1080]+ba/b[height<=1080]/best\" -o - \"{inputDetails.YouTubeUrl}\"",
                     UseShellExecute = false,
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
