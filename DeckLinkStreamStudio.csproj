@@ -59,6 +59,7 @@
     </ItemGroup>
     <Delete Files="@(OldSuffixedExes)" />
     <Copy SourceFiles="$(TargetDir)DeckLinkStreamStudio.exe" DestinationFiles="$(TargetDir)$(SuffixedExeName)" />
+    <Delete Files="$(TargetDir)DeckLinkStreamStudio.exe" />
   </Target>
 
 </Project>
